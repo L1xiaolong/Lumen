@@ -271,6 +271,8 @@ jobs:
     needs: package
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+
       - name: Download packages
         uses: actions/download-artifact@v8
         with:
@@ -302,5 +304,5 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Lumen $RELEASE_TAG" \
-              --generate-notes
+              --notes-file RELEASE_NOTES.md
           fi
