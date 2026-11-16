@@ -19,7 +19,7 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-          - os: macos-15
+          - os: macos-14
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7

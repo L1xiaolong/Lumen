@@ -74,7 +74,7 @@ jobs:
       matrix:
         include:
           - name: macOS arm64
-            os: macos-15
+            os: macos-14
             asset_suffix: macos-arm64
           - name: Windows x64
             os: windows-latest
