@@ -1,0 +1,21 @@
+{
+  "name": "lumen",
+  "version-string": "0.2.11",
+  "description": "Lightweight cross-platform image browser and comparison tool",
+  "license": "MIT",
+  "dependencies": [
+    { "name": "libraw", "default-features": false },
+    { "name": "exiv2", "default-features": false, "features": ["png", "xmp"] }
+  ],
+  "features": {
+    "color-management": {
+      "description": "Convert embedded ICC profiles to sRGB with LittleCMS",
+      "dependencies": [
+        {
+          "name": "lcms",
+          "default-features": false
+        }
+      ]
+    }
+  }
+}

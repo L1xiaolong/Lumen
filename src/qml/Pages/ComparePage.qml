@@ -1,0 +1,649 @@
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import QtQuick.Controls
+import QtCore
+import QtQuick.Dialogs as PlatformDialogs
+import QtQuick.Layouts
+import "../Mvp"
+
+Item {
+    id: root
+    objectName: "comparePage"
+
+    required property var controller
+    property var settingsController: null
+    property bool smoothDisplay: (!settingsController ||
+                                  settingsController.smoothDisplay === undefined)
+                                 ? true : settingsController.smoothDisplay
+    property bool externalModalVisible: false
+    property var paths: []
+    property var pixelValues: []
+    property string transientMessage: ""
+    property bool transientError: false
+    property int selectedSlot: 0
+    property string iconPrefix: Theme.iconPrefix
+    property real titleBarHeight: Theme.toolbarHeight
+    property real captionButtonsWidth: 0
+    readonly property rect titleBarLeftControls: Qt.rect(toolbarControls.x, 0,
+                                                        toolbarControls.width, toolbar.height)
+    readonly property rect titleBarRightControls: Qt.rect(0, 0, 0, 0)
+    readonly property var comparisonCanvas: comparisonCanvasLoader.item
+
+    signal closeRequested()
+    signal screenshotFinished(bool success, url destination)
+
+    function setSmoothDisplay(enabled) {
+        if (root.settingsController && root.settingsController.smoothDisplay !== undefined)
+            root.settingsController.smoothDisplay = enabled
+        else
+            root.smoothDisplay = enabled
+    }
+
+    function open(selectedPaths) {
+        paths = selectedPaths
+        pixelValues = []
+        transientMessage = ""
+        transientError = false
+        selectedSlot = 0
+        root.controller.setHoldCandidate(false)
+        root.controller.setPresentationMode(0)
+        root.controller.setSplitAmount(0.5)
+        root.controller.setSynchronized(true)
+        root.controller.setPaths(selectedPaths)
+        root.controller.fitAll()
+        if (root.controller.pixelValueVisible)
+            initializePixelPlaceholders()
+        forceActiveFocus()
+    }
+
+    function initializePixelPlaceholders() {
+        const placeholders = []
+        for (let slot = 0; slot < root.paths.length; ++slot)
+            placeholders.push(qsTr("Move over an image"))
+        pixelValues = placeholders
+    }
+
+    function showTransientMessage(message, isError) {
+        transientMessage = message
+        transientError = isError
+        transientMessageTimer.restart()
+    }
+
+    function saveScreenshot() {
+        const pictures = StandardPaths.writableLocation(StandardPaths.PicturesLocation)
+        if (pictures && pictures.toString().length > 0)
+            screenshotSaveDialog.currentFolder = pictures
+        screenshotSaveDialog.selectedFile = screenshotSaveDialog.currentFolder
+                + "/screen_shot_" + Date.now() + ".png"
+        screenshotSaveDialog.open()
+    }
+
+    function captureScreenshot(destination) {
+        const scheduled = stage.grabToImage(function(result) {
+            const saved = result.saveToFile(destination)
+            if (saved)
+                root.showTransientMessage(qsTr("Screenshot saved"), false)
+            else
+                root.showTransientMessage(qsTr("Unable to save screenshot. Choose another location and try again."), true)
+            root.screenshotFinished(saved, destination)
+        })
+        if (!scheduled) {
+            root.showTransientMessage(qsTr("Unable to capture comparison. Wait for the images to load and try again."), true)
+            root.screenshotFinished(false, destination)
+        }
+    }
+
+    function comparisonFileText(slot, navigationData) {
+        const currentRevision = root.controller.revision
+        const fileText = root.controller.fileText(slot) || qsTr("Loading…")
+        return fileText + "," + (navigationData.zoom || "—%")
+    }
+
+    function comparisonExifText(slot) {
+        const currentRevision = root.controller.revision
+        return root.controller.cameraText(slot)
+    }
+
+    function comparisonColumns() {
+        return root.paths.length === 4 ? 2 : Math.max(1, root.paths.length)
+    }
+
+    function comparisonRows() {
+        return root.paths.length === 4 ? 2 : 1
+    }
+
+    function cellX(slot, availableWidth) {
+        if (root.controller.presentationMode !== 0)
+            return 0
+        const columns = comparisonColumns()
+        const availableCellWidth = (availableWidth - 1 * (columns - 1)) / columns
+        return (slot % columns) * (availableCellWidth + 1)
+    }
+
+    function cellY(slot, availableHeight) {
+        if (root.controller.presentationMode !== 0)
+            return 0
+        const rows = comparisonRows()
+        const availableCellHeight = (availableHeight - 1 * (rows - 1)) / rows
+        return Math.floor(slot / comparisonColumns()) * (availableCellHeight + 1)
+    }
+
+    function cellWidth(availableWidth) {
+        if (root.controller.presentationMode !== 0)
+            return availableWidth
+        return (availableWidth - 1 * (comparisonColumns() - 1)) / comparisonColumns()
+    }
+
+    function cellHeight(availableHeight) {
+        if (root.controller.presentationMode !== 0)
+            return availableHeight
+        return (availableHeight - 1 * (comparisonRows() - 1)) / comparisonRows()
+    }
+
+    function requestHistograms() {
+        for (let slot = 0; slot < root.paths.length; ++slot)
+            root.controller.requestHistogram(slot)
+    }
+
+    PlatformDialogs.FileDialog {
+        id: screenshotSaveDialog
+        objectName: "comparisonScreenshotSaveDialog"
+        title: qsTr("Save comparison screenshot")
+        fileMode: PlatformDialogs.FileDialog.SaveFile
+        nameFilters: ["PNG image (*.png)"]
+        defaultSuffix: "png"
+        onAccepted: root.captureScreenshot(selectedFile)
+    }
+
+    ShortcutContext { id: shortcutContext; targetWindow: root.Window.window }
+    readonly property bool imageShortcutsEnabled: root.visible && !externalModalVisible &&
+        !screenshotSaveDialog.visible && !shortcutContext.textInputFocused
+    Shortcut { enabled: root.imageShortcutsEnabled; sequence: "Esc"; onActivated: root.closeRequested() }
+    Shortcut { enabled: root.imageShortcutsEnabled; sequence: "F"; onActivated: root.controller.fitAll() }
+    Shortcut { enabled: root.imageShortcutsEnabled; sequence: "1"; onActivated: root.controller.actualPixelsAll() }
+    Keys.onPressed: function(event) {
+        if (root.imageShortcutsEnabled && event.key === Qt.Key_B && event.modifiers === Qt.NoModifier && !event.isAutoRepeat) {
+            root.controller.setHoldCandidate(true)
+            event.accepted = true
+        }
+    }
+    Keys.onReleased: function(event) {
+        if (event.key === Qt.Key_B && event.modifiers === Qt.NoModifier && !event.isAutoRepeat) {
+            root.controller.setHoldCandidate(false)
+            event.accepted = true
+        }
+    }
+
+    Connections {
+        target: root.controller
+
+        function onFrameChanged(slot, fullResolution) {
+            if (root.controller.histogramVisible)
+                root.controller.requestHistogram(slot)
+        }
+
+        function onHistogramVisibleChanged() {
+            if (root.controller.histogramVisible)
+                root.requestHistograms()
+        }
+
+        function onPixelValueVisibleChanged() {
+            if (root.controller.pixelValueVisible && root.pixelValues.length === 0)
+                root.initializePixelPlaceholders()
+        }
+    }
+
+    Connections {
+        target: root.Window.window
+
+        function onActiveChanged() {
+            if (root.Window.window && !root.Window.window.active)
+                root.controller.setHoldCandidate(false)
+        }
+    }
+
+    Timer {
+        id: transientMessageTimer
+        interval: 3000
+        onTriggered: root.transientMessage = ""
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.canvasBackground
+    }
+
+    Rectangle {
+        id: toolbar
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: root.titleBarHeight
+        color: Theme.raisedSurface
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 1
+            color: Theme.opticalGray
+        }
+
+        RowLayout {
+            id: toolbarControls
+            x: Math.max(8, (parent.width - root.captionButtonsWidth - width) / 2)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 2
+
+            AppIconButton {
+                controlSize: 28
+                renderedIconSize: 16
+                checkable: true
+                checked: root.controller.presentationMode === 0
+                iconSource: root.iconPrefix + "side-by-side.svg"
+                toolTipText: qsTr("Side by side · Hold Ctrl while zooming or panning to adjust one image")
+                onClicked: root.controller.setPresentationMode(0)
+            }
+            AppIconButton {
+                controlSize: 28
+                renderedIconSize: 16
+                enabled: root.paths.length === 2
+                checkable: true
+                checked: root.controller.presentationMode === 1
+                iconSource: root.iconPrefix + "split-vertical.svg"
+                toolTipText: qsTr("Vertical split")
+                onClicked: root.controller.setPresentationMode(1)
+            }
+            AppIconButton {
+                controlSize: 28
+                renderedIconSize: 16
+                enabled: root.paths.length === 2 && root.controller.presentationMode === 0
+                checkable: true
+                checked: root.controller.holdCandidate
+                iconSource: root.iconPrefix + "cover.svg"
+                toolTipText: qsTr("Hold B to inspect the candidate")
+                onPressed: root.controller.setHoldCandidate(true)
+                onReleased: root.controller.setHoldCandidate(false)
+            }
+
+            Rectangle {
+                Layout.leftMargin: 4
+                Layout.rightMargin: 4
+                implicitWidth: 1
+                implicitHeight: 17
+                color: Theme.opticalGray
+            }
+
+            AppIconButton {
+                controlSize: 28
+                renderedIconSize: 16
+                iconSource: root.iconPrefix + "fit.svg"
+                toolTipText: qsTr("Fit all images")
+                shortcutText: "F"
+                onClicked: root.controller.fitAll()
+            }
+            AppIconButton {
+                controlSize: 28
+                renderedIconSize: 16
+                iconSource: root.iconPrefix + "actual-size.svg"
+                toolTipText: qsTr("100% (1:1)")
+                shortcutText: "1"
+                onClicked: root.controller.actualPixelsAll()
+            }
+            AppIconButton {
+                objectName: "compareSmoothDisplayButton"
+                controlSize: 28
+                renderedIconSize: 16
+                checkable: true
+                checked: root.smoothDisplay
+                iconSource: root.iconPrefix + "smooth-display.svg"
+                toolTipText: qsTr("Smooth display")
+                onClicked: root.setSmoothDisplay(checked)
+            }
+            AppIconButton {
+                objectName: "compareRotateCounterClockwiseButton"
+                controlSize: 28
+                renderedIconSize: 16
+                enabled: root.paths.length > 0
+                iconSource: root.iconPrefix + "rotate-ccw-square.svg"
+                toolTipText: qsTr("Rotate selected image 90° counterclockwise")
+                onClicked: {
+                    const error = root.controller.rotateCounterClockwise(root.selectedSlot)
+                    if (error.length > 0) root.showTransientMessage(error, true)
+                    else root.showTransientMessage(qsTr("Image rotated and saved"), false)
+                }
+            }
+            AppIconButton {
+                objectName: "compareRotateClockwiseButton"
+                controlSize: 28
+                renderedIconSize: 16
+                enabled: root.paths.length > 0
+                iconSource: root.iconPrefix + "rotate-cw-square.svg"
+                toolTipText: qsTr("Rotate selected image 90° clockwise")
+                onClicked: {
+                    const error = root.controller.rotateClockwise(root.selectedSlot)
+                    if (error.length > 0) root.showTransientMessage(error, true)
+                    else root.showTransientMessage(qsTr("Image rotated and saved"), false)
+                }
+            }
+
+            Rectangle {
+                Layout.leftMargin: 4
+                Layout.rightMargin: 4
+                implicitWidth: 1
+                implicitHeight: 17
+                color: Theme.opticalGray
+            }
+
+            AppIconButton {
+                controlSize: 28
+                renderedIconSize: 16
+                checkable: true
+                checked: root.controller.fileInformationVisible
+                iconSource: root.iconPrefix + "info.svg"
+                toolTipText: qsTr("File information")
+                onClicked: root.controller.setFileInformationVisible(checked)
+            }
+            AppIconButton {
+                controlSize: 28
+                renderedIconSize: 16
+                checkable: true
+                checked: root.controller.exifVisible
+                iconSource: root.iconPrefix + "exif.svg"
+                toolTipText: qsTr("EXIF information")
+                onClicked: root.controller.setExifVisible(checked)
+            }
+            AppIconButton {
+                controlSize: 28
+                renderedIconSize: 16
+                checkable: true
+                checked: root.controller.histogramVisible
+                iconSource: root.iconPrefix + "histogram.svg"
+                toolTipText: qsTr("Luma histogram")
+                onClicked: root.controller.setHistogramVisible(checked)
+            }
+            AppIconButton {
+                controlSize: 28
+                renderedIconSize: 16
+                checkable: true
+                checked: root.controller.pixelValueVisible
+                iconSource: root.iconPrefix + "pixel-probe.svg"
+                toolTipText: qsTr("Pixel values")
+                onClicked: root.controller.setPixelValueVisible(checked)
+            }
+            AppIconButton {
+                id: thumbnailButton
+                objectName: "compareThumbnailButton"
+                controlSize: 28
+                renderedIconSize: 16
+                checkable: true
+                checked: root.controller.thumbnailVisible
+                iconSource: root.iconPrefix + "thumbnail-preview.svg"
+                toolTipText: qsTr("Thumbnail")
+                onClicked: root.controller.setThumbnailVisible(checked)
+            }
+
+            Rectangle {
+                Layout.leftMargin: 4
+                Layout.rightMargin: 4
+                implicitWidth: 1
+                implicitHeight: 17
+                color: Theme.opticalGray
+            }
+
+            AppIconButton {
+                objectName: "saveComparisonScreenshotButton"
+                controlSize: 28
+                renderedIconSize: 16
+                iconSource: root.iconPrefix + "screenshot.svg"
+                toolTipText: qsTr("Save screenshot")
+                onClicked: root.saveScreenshot()
+            }
+        }
+    }
+
+    Item {
+        id: stage
+        anchors.top: toolbar.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        clip: true
+
+        Loader {
+            id: comparisonCanvasLoader
+            anchors.fill: parent
+            active: root.visible
+            source: Qt.resolvedUrl("../Mvp/ProductionCompareCanvas.qml")
+            onLoaded: {
+                if (item) {
+                    item.controller = root.controller
+                    item.settingsController = root.settingsController
+                }
+            }
+        }
+
+        Connections {
+            target: root.comparisonCanvas
+            ignoreUnknownSignals: true
+            function onPixelHovered(sourceSlot, pixel, valueText, valid) {
+                if (valid)
+                    root.pixelValues = root.controller.pixelTexts(sourceSlot, pixel.x, pixel.y)
+            }
+            function onSlotActivated(slot) { root.selectedSlot = slot }
+        }
+
+        Rectangle {
+            visible: root.controller.presentationMode === 0 && root.comparisonColumns() > 1
+            x: root.cellWidth(parent.width)
+            width: 1
+            height: parent.height
+            color: "#B8B8B8"
+        }
+        Rectangle {
+            visible: root.controller.presentationMode === 0 && root.paths.length === 3
+            x: root.cellWidth(parent.width) * 2 + 1
+            width: 1
+            height: parent.height
+            color: "#B8B8B8"
+        }
+        Rectangle {
+            visible: root.controller.presentationMode === 0 && root.paths.length === 4
+            y: root.cellHeight(parent.height)
+            width: parent.width
+            height: 1
+            color: "#B8B8B8"
+        }
+        Rectangle {
+            visible: root.controller.presentationMode === 1 && root.paths.length === 2
+            x: root.comparisonCanvas ? root.comparisonCanvas.dividerPosition - 0.5 : 0
+            width: 1
+            height: parent.height
+            color: Theme.pressedSurface
+        }
+
+        Repeater {
+            model: root.paths
+
+            delegate: Item {
+                id: comparisonCell
+
+                required property int index
+                property var navigationData: {
+                    if (!root.comparisonCanvas)
+                        return { "visible": false }
+                    const currentNavigationRevision = root.comparisonCanvas.navigationRevision
+                    return root.comparisonCanvas.navigationState(comparisonCell.index)
+                }
+
+                x: root.controller.presentationMode === 1
+                   ? (comparisonCell.index === 0 ? 0 : root.comparisonCanvas.dividerPosition)
+                   : root.cellX(comparisonCell.index, stage.width)
+                y: root.cellY(comparisonCell.index, stage.height)
+                width: root.controller.presentationMode === 1
+                       ? (comparisonCell.index === 0
+                          ? root.comparisonCanvas.dividerPosition
+                          : stage.width - root.comparisonCanvas.dividerPosition)
+                       : root.cellWidth(stage.width)
+                height: root.cellHeight(stage.height)
+                visible: root.controller.presentationMode === 0
+                         || (root.controller.presentationMode === 1
+                             && comparisonCell.index < 2)
+                clip: true
+
+                Rectangle {
+                    anchors.fill: parent
+                    color: "transparent"
+                    border.width: root.selectedSlot === comparisonCell.index ? 2 : 0
+                    border.color: Theme.primaryButton
+                    z: 20
+                }
+
+                Rectangle {
+                    objectName: "compareNavigationOverlay_" + comparisonCell.index
+                    visible: root.controller.thumbnailVisible
+                             && comparisonCell.navigationData.visible === true
+                    anchors.left: parent.left
+                    anchors.bottom: parent.bottom
+                    anchors.margins: 8
+                    width: comparisonCell.navigationData.width || 0
+                    height: comparisonCell.navigationData.height || 0
+                    radius: 3
+                    color: "#991E2227"
+                    border.width: 1
+                    border.color: "#80FFFFFF"
+
+                    NavigationThumbnail {
+                        anchors.fill: parent
+                        anchors.margins: 3
+                        path: root.paths[comparisonCell.index] || ""
+                        sourceSize: Qt.size(90, 65)
+                        fillMode: Image.Stretch
+                        smooth: root.smoothDisplay
+                        mipmap: root.smoothDisplay
+                        opacity: 0.72
+                    }
+                    Rectangle {
+                        property rect normalizedViewport: comparisonCell.navigationData.viewport
+                                                                 || Qt.rect(0, 0, 0, 0)
+                        x: 3 + normalizedViewport.x * (parent.width - 6)
+                        y: 3 + normalizedViewport.y * (parent.height - 6)
+                        width: normalizedViewport.width * (parent.width - 6)
+                        height: normalizedViewport.height * (parent.height - 6)
+                        color: "#18FFFFFF"
+                        border.width: 1
+                        border.color: "white"
+                    }
+                }
+
+                Column {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.margins: 8
+                    spacing: 2
+
+                Item {
+                    visible: root.controller.fileInformationVisible
+                    width: Math.max(0, comparisonCell.width - 16)
+                    height: fileInformation.implicitHeight
+
+                    Text {
+                        id: fileInformation
+                        objectName: "compareFileInformation_" + comparisonCell.index
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        text: root.comparisonFileText(comparisonCell.index,
+                                                      comparisonCell.navigationData)
+                        color: "#00FF00"
+                        font.family: Theme.monoFont
+                        font.pixelSize: 12
+                        font.weight: Font.Bold
+                        elide: Text.ElideRight
+                    }
+                }
+
+                Item {
+                    visible: root.controller.exifVisible
+                    width: Math.max(0, comparisonCell.width - 16)
+                    height: exifInformation.implicitHeight
+
+                    Text {
+                        id: exifInformation
+                        objectName: "compareExifInformation_" + comparisonCell.index
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        text: root.comparisonExifText(comparisonCell.index)
+                        color: "#00FF00"
+                        font.family: Theme.monoFont
+                        font.pixelSize: 12
+                        font.weight: Font.Bold
+                        elide: Text.ElideRight
+                    }
+                }
+
+                CompareLumaHistogram {
+                    objectName: "compareLumaHistogram_" + comparisonCell.index
+                    controller: root.controller
+                    visible: root.controller.histogramVisible
+                    width: Math.min(implicitWidth, comparisonCell.width - 16)
+                    height: implicitHeight
+                    slot: root.controller.holdCandidate && comparisonCell.index === 0
+                          ? 1 : comparisonCell.index
+
+                    Component.onCompleted: {
+                        if (visible)
+                            request()
+                    }
+                    onVisibleChanged: {
+                        if (visible)
+                            request()
+                    }
+                }
+            }
+
+            Item {
+                visible: root.controller.pixelValueVisible
+                         && root.pixelValues[comparisonCell.index]
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 8
+                width: Math.min(parent.width - 16, pixelValue.implicitWidth)
+                height: pixelValue.implicitHeight
+
+                Text {
+                    id: pixelValue
+                    objectName: "comparePixelValue_" + comparisonCell.index
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    text: root.pixelValues[comparisonCell.index] || ""
+                    color: "#00FF00"
+                    font.pixelSize: 12
+                    font.weight: Font.Bold
+                    font.family: Theme.monoFont
+                    elide: Text.ElideRight
+                }
+            }
+        }
+        }
+
+        Rectangle {
+            visible: root.transientMessage.length > 0
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: 10
+            width: transientLabel.implicitWidth + 22
+            height: 28
+            radius: 4
+            color: root.transientError ? "#E8B33B3B" : "#D91E2227"
+
+            Label {
+                id: transientLabel
+                anchors.centerIn: parent
+                text: root.transientMessage
+                color: "white"
+                font.pixelSize: 10
+            }
+        }
+    }
+}

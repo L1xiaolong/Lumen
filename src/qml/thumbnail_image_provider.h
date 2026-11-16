@@ -1,0 +1,45 @@
+#pragma once
+
+#include <QImage>
+#include <QQuickImageProvider>
+
+#include <memory>
+
+namespace mvpview {
+
+class IImageDecoder;
+class ImageLoader;
+
+} // namespace mvpview
+
+namespace mvpview {
+
+// Resolves Windows Shell folder artwork for Quick Access entries. Other platforms keep using
+// the existing bundled folder artwork and do not register URLs for this provider.
+class SystemFolderIconProvider final : public QQuickImageProvider {
+  public:
+    SystemFolderIconProvider();
+    ~SystemFolderIconProvider() override;
+    QImage requestImage(const QString& id, QSize* size,
+                        const QSize& requestedSize) override;
+
+};
+
+// Cross-platform image provider for QML thumbnails. The URL contains only an encoded local path;
+// decoding and RAW/YUV parameter inference stay in the existing IO layer.
+class ThumbnailImageProvider final : public QQuickAsyncImageProvider {
+  public:
+    ThumbnailImageProvider(std::shared_ptr<const IImageDecoder> decoder, ImageLoader* loader);
+
+    QQuickImageResponse* requestImageResponse(const QString& id,
+                                              const QSize& requestedSize) override;
+    // Synchronous compatibility helper for callers that need an immediate image.
+    QImage requestImage(const QString& id, QSize* size,
+                        const QSize& requestedSize) override;
+    [[nodiscard]] static QSize bucketedSize(const QSize& requestedSize);
+
+  private:
+    ImageLoader* loader_ = nullptr;
+};
+
+} // namespace mvpview

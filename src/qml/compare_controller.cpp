@@ -1,0 +1,546 @@
+#include "diagnostics/diagnostics.h"
+#include "qml/compare_controller.h"
+#include "qml/qml_image_canvas.h"
+
+#include "core/comparison_pixel_probe.h"
+#include "core/display_histogram.h"
+#include "core/raw_plane_access.h"
+#include "io/image_loader.h"
+#include "io/raw_preset_store.h"
+#include "io/image_transformer.h"
+#include "platform/platform_services.h"
+
+#include <QCoreApplication>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QLocale>
+#include <QPointer>
+#include <QQuickWindow>
+#include <QSettings>
+#include <QThreadPool>
+#include <QTimer>
+
+#include <algorithm>
+
+namespace mvpview {
+namespace {
+
+template <typename Bins>
+double medianFor(const Bins& bins, quint64 samples) {
+    if (samples == 0) return 0.0;
+    const quint64 firstTarget = (samples - 1) / 2;
+    const quint64 secondTarget = samples / 2;
+    quint64 cumulative = 0;
+    int first = -1;
+    int second = -1;
+    for (qsizetype index = 0; index < static_cast<qsizetype>(bins.size()); ++index) {
+        cumulative += bins.at(static_cast<typename Bins::size_type>(index));
+        if (first < 0 && cumulative > firstTarget) first = static_cast<int>(index);
+        if (cumulative > secondTarget) { second = static_cast<int>(index); break; }
+    }
+    return (std::max(0, first) + std::max(0, second)) / 2.0;
+}
+
+QVariantList binsFor(const auto& bins) {
+    QVariantList values;
+    values.reserve(static_cast<qsizetype>(bins.size()));
+    for (const auto value : bins) values.append(QVariant::fromValue<qulonglong>(value));
+    return values;
+}
+
+QVariantMap histogramChannel(const QString& name, const QString& color, const auto& bins,
+                            quint64 samples, double mean, double deviation, int minimum, int maximum) {
+    return {{QStringLiteral("name"), name}, {QStringLiteral("color"), color},
+            {QStringLiteral("bins"), binsFor(bins)}, {QStringLiteral("mean"), mean},
+            {QStringLiteral("variance"), deviation * deviation}, {QStringLiteral("min"), minimum},
+            {QStringLiteral("max"), maximum}, {QStringLiteral("median"), medianFor(bins, samples)}};
+}
+
+QVariantMap displayHistogramMap(const DisplayHistogram& histogram) {
+    if (!histogram.isValid()) return {{QStringLiteral("valid"), false}, {QStringLiteral("summary"), QCoreApplication::translate("ImageProperties", "Display histogram unavailable")}};
+    QVariantList channels;
+    const quint64 samples = static_cast<quint64>(std::max<qint64>(0, histogram.sampledPixelCount));
+    channels << histogramChannel(QStringLiteral("Luma"), QStringLiteral("#F4F5F2"),
+                                 histogram.luma.bins, samples, histogram.luma.mean,
+                                 histogram.luma.standardDeviation, histogram.luma.minimum,
+                                 histogram.luma.maximum);
+    return {{QStringLiteral("valid"), true},
+            {QStringLiteral("maximumValue"), histogram.maximumValue},
+            {QStringLiteral("channels"), channels}};
+}
+
+QString compactDataSize(qint64 bytes) {
+    QString text =
+        QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat);
+    for (qsizetype index = text.size(); index > 0; --index) {
+        if (text.at(index - 1).isSpace())
+            text.remove(index - 1, 1);
+    }
+    return text;
+}
+
+} // namespace
+
+CompareController::CompareController(ImageLoader* loader, QObject* parent)
+    : QObject(parent), loader_(loader) {
+    automaticFullLoadTimer_.setSingleShot(true);
+    automaticFullLoadTimer_.setInterval(250);
+    connect(&automaticFullLoadTimer_, &QTimer::timeout, this,
+            &CompareController::requestAutomaticFullFrames);
+    const QSettings settings;
+    fileInformationVisible_ =
+        settings.value(QStringLiteral("compare/fileInformationVisible"), true).toBool();
+    exifVisible_ = settings.value(QStringLiteral("compare/exifVisible"), false).toBool();
+    histogramVisible_ =
+        settings.value(QStringLiteral("compare/histogramVisible"), false).toBool();
+    pixelValueVisible_ =
+        settings.value(QStringLiteral("compare/pixelValueVisible"), false).toBool();
+    thumbnailVisible_ =
+        settings.value(QStringLiteral("compare/thumbnailVisible"), true).toBool();
+}
+
+ImageFramePtr CompareController::frame(int slot) const {
+    return slot >= 0 && slot < frames_.size() ? frames_.at(slot) : ImageFramePtr{};
+}
+
+QString CompareController::fileText(int slot) const {
+    const auto value = frame(slot);
+    if (!value)
+        return errors_.value(slot);
+
+    const QString path = paths_.value(slot);
+    const QFileInfo info(path);
+    const QString fileName = !value->metadata.fileName.isEmpty()
+                                 ? value->metadata.fileName
+                                 : info.fileName();
+    const QSize imageSize = ComparisonPixelProbe::logicalFrameSize(*value);
+    const QString resolution = imageSize.isValid()
+                                   ? QStringLiteral("%1*%2")
+                                         .arg(imageSize.width())
+                                         .arg(imageSize.height())
+                                   : QStringLiteral("—*—");
+    const qint64 fileSize = value->metadata.fileSize;
+    const QString sizeText = fileSize > 0 ? compactDataSize(fileSize) : QStringLiteral("—");
+    return QStringLiteral("%1,%2,%3").arg(fileName, resolution, sizeText);
+}
+
+QString CompareController::cameraText(int slot) const {
+    const auto value = frame(slot);
+    const auto details = metadata_.value(slot);
+    if (!value || !details.camera) return QCoreApplication::translate("ImageProperties", "No EXIF camera data");
+    const auto& camera = *details.camera;
+    QStringList parts;
+    const QString model = QStringLiteral("%1 %2").arg(camera.make, camera.model).trimmed();
+    if (!model.isEmpty()) parts.append(model);
+    if (camera.exposureSeconds > 0.0) parts.append(camera.exposureSeconds < 1.0
+        ? QStringLiteral("1/%1 s").arg(qRound(1.0 / camera.exposureSeconds))
+        : QStringLiteral("%1 s").arg(camera.exposureSeconds, 0, 'g', 4));
+    if (camera.aperture > 0.0) parts.append(QStringLiteral("f/%1").arg(camera.aperture, 0, 'g', 3));
+    if (camera.iso > 0) parts.append(QStringLiteral("ISO %1").arg(camera.iso));
+    if (camera.focalLengthMm > 0.0) parts.append(QStringLiteral("%1 mm").arg(camera.focalLengthMm, 0, 'g', 4));
+    return parts.isEmpty() ? QCoreApplication::translate("ImageProperties", "No EXIF camera data") : parts.join(QStringLiteral("  •  "));
+}
+
+void CompareController::setPaths(const QStringList& requested) {
+    const QStringList bounded = requested.mid(0, 4);
+    if (bounded == paths_) return;
+    automaticFullLoadTimer_.stop();
+    for (const LoadHandle& handle : previewHandles_) handle.cancel();
+    for (const LoadHandle& handle : fullHandles_) handle.cancel();
+    paths_ = bounded;
+    frames_.fill({}, paths_.size());
+    errors_.fill({}, paths_.size());
+    generations_.fill(0, paths_.size());
+    for (const auto& handle : metadataHandles_) handle.cancel();
+    metadataHandles_.fill({}, paths_.size());
+    metadata_.fill({}, paths_.size());
+    for (const auto& handle : histogramHandles_) handle.cancel();
+    histogramHandles_.fill({}, paths_.size());
+    histogramGenerations_.fill(0, paths_.size());
+    histogramRequested_.fill(false, paths_.size());
+    displayHistograms_.fill({}, paths_.size());
+    previewHandles_.fill({}, paths_.size());
+    fullHandles_.fill({}, paths_.size());
+    fullRequested_.fill(false, paths_.size());
+    fullResolution_.fill(false, paths_.size());
+    holdCandidate_ = false;
+    QJsonArray files;
+    for (const QString& path : paths_) files.append(diagnostics::fileId(path));
+    diagnostics::event(diagnostics::Level::Info, diagnostics::browse(),
+                       QStringLiteral("compare.session_open"),
+                       {{QStringLiteral("slots"), static_cast<int>(paths_.size())},
+                        {QStringLiteral("files"), files}},
+                       true);
+    emit pathsChanged();
+    emit holdCandidateChanged();
+    refreshCanvas(-1, true);
+    for (int slot = 0; slot < paths_.size(); ++slot) requestFrame(slot, paths_.at(slot));
+}
+
+void CompareController::closeSession() {
+    const int slotCount = static_cast<int>(paths_.size());
+    setPaths({});
+    if (slotCount > 0)
+        diagnostics::event(diagnostics::Level::Info, diagnostics::browse(),
+                           QStringLiteral("compare.session_close"),
+                           {{QStringLiteral("slots"), slotCount}}, true);
+    if (canvas_) canvas_->setFrames({}, -1, true);
+    // Shared caches survive session transitions; the loader enforces their budget.
+}
+
+void CompareController::reload() {
+    if (paths_.isEmpty())
+        return;
+    const QStringList currentPaths = paths_;
+    paths_.clear();
+    setPaths(currentPaths);
+}
+
+void CompareController::requestFrame(int slot, const QString& path) {
+    if (!loader_) return;
+    std::optional<RawImageParameters> rawParameters = loader_->rawParameters(path);
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    const quint64 generation = ++generations_[slot];
+    const qreal dpr = canvas_ && canvas_->window() ? canvas_->window()->devicePixelRatio() : 1.0;
+    const int slotCount = std::max(1, static_cast<int>(paths_.size()));
+    QSize previewSize = canvas_ ? QSize(qRound(canvas_->width() * dpr / slotCount),
+                                       qRound(canvas_->height() * dpr))
+                                : QSize(1280, 1000);
+    previewSize = previewSize.expandedTo(QSize(640, 480)).boundedTo(QSize(1920, 1600));
+    const bool quick = ((rawParameters && rawParameters->isYuv()) ||
+                        (!rawParameters && suffix == QStringLiteral("yuv"))) &&
+        !loader_->isCached({path, DecodePurpose::Preview, previewSize, rawParameters});
+    requestPreview(slot, path, generation, previewSize, rawParameters, quick);
+}
+
+void CompareController::requestPreview(int slot, const QString& path, quint64 generation, QSize size,
+                                       std::optional<RawImageParameters> raw, bool quick) {
+    const QPointer<CompareController> self(this);
+    previewHandles_[slot] = loader_->request(
+        generation, {path, DecodePurpose::Preview, quick ? QSize(512, 512) : size, raw},
+        [self, slot, path, generation, size, raw, quick](quint64 id, const DecodeResult& result) {
+            if (!self || id != generation || slot < 0 || slot >= self->generations_.size() ||
+                self->generations_.at(slot) != generation || self->paths_.value(slot) != path || self->fullRequested_.value(slot) ||
+                self->fullResolution_.value(slot)) return;
+            if (!result.frame) {
+                self->errors_[slot] = result.error;
+                emit self->loadFailed(slot, result.error);
+                ++self->revision_;
+                emit self->revisionChanged();
+                return;
+            }
+            self->errors_[slot].clear();
+            const bool firstFrame = !self->frames_.value(slot);
+            self->frames_[slot] = result.frame;
+            self->metadata_[slot] = result.frame->metadata;
+            if (self->exifVisible_) self->requestMetadata(slot);
+            self->refreshCanvas(slot, firstFrame);
+            self->clearHistograms(slot);
+            if (self->histogramRequested_.value(slot)) self->requestHistogram(slot);
+            emit self->frameChanged(slot, false);
+            ++self->revision_;
+            emit self->revisionChanged();
+            if (self->pixelValueVisible_ || self->histogramVisible_) {
+                self->requestFullFrame(slot, LoadCategory::Interactive);
+            } else if (quick) {
+                QTimer::singleShot(0, self, [self, slot, path, generation, size, raw] {
+                    if (self && self->paths_.value(slot) == path && self->generations_.value(slot) == generation &&
+                        !self->fullRequested_.value(slot) && !self->fullResolution_.value(slot))
+                        self->requestPreview(slot, path, generation, size, raw, false);
+                });
+            } else {
+                self->automaticFullLoadTimer_.start();
+            }
+        }, RequestOptions{LoadCategory::Interactive, quick ? 30 : 20,
+                          QStringLiteral("compare-preview")});
+}
+
+void CompareController::requestFullFrame(int slot, LoadCategory category) {
+    if (!loader_ || slot < 0 || slot >= frames_.size() || !frames_.value(slot) ||
+        fullRequested_.value(slot) || fullResolution_.value(slot)) {
+        return;
+    }
+    fullRequested_[slot] = true;
+    previewHandles_[slot].cancel();
+    const quint64 generation = generations_.at(slot);
+    const QString path = paths_.at(slot);
+    const QPointer<CompareController> self(this);
+    fullHandles_[slot] = loader_->request(
+        generation, {path, DecodePurpose::Full, {}},
+        [self, slot, generation](quint64 fullId, const DecodeResult& full) {
+            if (!self || fullId != generation || slot < 0 ||
+                slot >= self->generations_.size() ||
+                self->generations_.at(slot) != generation) {
+                return;
+            }
+            self->fullRequested_[slot] = false;
+            if (!full.frame) {
+                return;
+            }
+            self->fullResolution_[slot] = true;
+            self->frames_[slot] = full.frame;
+            self->refreshCanvas(slot, false);
+            self->clearHistograms(slot);
+            if (self->histogramRequested_.value(slot)) {
+                self->requestHistogram(slot);
+            }
+            emit self->frameChanged(slot, true);
+            ++self->revision_;
+            emit self->revisionChanged();
+        },
+        RequestOptions{category, 0, QStringLiteral("compare-full")});
+}
+
+void CompareController::requestAutomaticFullFrames() {
+    if (loader_ && !frames_.isEmpty() && (loader_->fastScrolling() || loader_->hasInteractiveWork())) {
+        automaticFullLoadTimer_.start();
+        return;
+    }
+    if (!loader_ || frames_.isEmpty() || !loader_->canAutomaticallyLoadFull(frames_)) {
+        return;
+    }
+    for (int slot = 0; slot < frames_.size(); ++slot) {
+        requestFullFrame(slot, LoadCategory::NearViewport);
+    }
+}
+
+QString CompareController::rotateSlot(int slot, bool clockwise) {
+    if (!loader_ || slot < 0 || slot >= paths_.size())
+        return QCoreApplication::translate("FileOperations", "Select an image to rotate.");
+    const QString path = paths_.at(slot);
+    std::optional<RawImageParameters> raw = loader_->rawParameters(path);
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (!raw && (suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv")))
+        raw = RawPresetStore::loadForFile(path);
+    if (!raw && (suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv"))) {
+        const RawImageParameters inferred = RawPresetStore::inferFromFileName(path);
+        if (inferred.size.isValid()) raw = inferred;
+    }
+    if ((suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv")) && !raw)
+        return QCoreApplication::translate("FileOperations", "Configure the RAW/YUV dimensions and pixel format first.");
+    const QString error = ImageTransformer::rotate(
+        path, clockwise ? QuarterTurn::Clockwise : QuarterTurn::CounterClockwise, raw);
+    if (!error.isEmpty()) return error;
+    loader_->clearCache();
+    if (const auto updatedRaw = RawPresetStore::loadForFile(path))
+        loader_->setRawParameters(path, *updatedRaw);
+    requestFrame(slot, path);
+    emit imageTransformed(path);
+    return {};
+}
+
+QString CompareController::rotateClockwise(int slot) { return rotateSlot(slot, true); }
+
+QString CompareController::rotateCounterClockwise(int slot) { return rotateSlot(slot, false); }
+
+void CompareController::ensureFullFrames() {
+    automaticFullLoadTimer_.stop();
+    for (int slot = 0; slot < frames_.size(); ++slot) {
+        requestFullFrame(slot, LoadCategory::Interactive);
+    }
+}
+
+void CompareController::setPresentationMode(int mode) {
+    mode = std::clamp(mode, 0, 1); if (presentationMode_ == mode) return;
+    setHoldCandidate(false);
+    presentationMode_ = mode;
+    if (canvas_) canvas_->setPresentationMode(mode);
+    emit presentationModeChanged();
+    diagnostics::event(diagnostics::Level::Info, diagnostics::render(),
+                       QStringLiteral("compare.presentation_mode"),
+                       {{QStringLiteral("mode"), mode},
+                        {QStringLiteral("slots"), static_cast<int>(paths_.size())}},
+                       true);
+}
+void CompareController::setSplitAmount(qreal amount) {
+    amount = std::clamp(amount, qreal(0), qreal(1)); if (qFuzzyCompare(splitAmount_, amount)) return;
+    splitAmount_ = amount;
+    if (canvas_) canvas_->setCompareAmount(amount);
+    emit splitAmountChanged();
+}
+void CompareController::setSynchronized(bool enabled) {
+    if (synchronized_ == enabled) return;
+    synchronized_ = enabled;
+    if (canvas_) canvas_->setSynchronized(enabled);
+    emit synchronizedChanged();
+}
+void CompareController::setHoldCandidate(bool active) {
+    if (frames_.size() != 2 || !frames_.value(0) || !frames_.value(1) || presentationMode_ != 0)
+        active = false;
+    if (holdCandidate_ == active) return;
+    holdCandidate_ = active;
+    applyHoldFrame();
+    emit holdCandidateChanged();
+    diagnostics::event(diagnostics::Level::Info, diagnostics::render(),
+                       QStringLiteral("compare.hold_compare"),
+                       {{QStringLiteral("active"), active}}, true);
+}
+
+void CompareController::setFileInformationVisible(bool visible) {
+    if (fileInformationVisible_ == visible) return;
+    fileInformationVisible_ = visible;
+    QSettings().setValue(QStringLiteral("compare/fileInformationVisible"), visible);
+    emit fileInformationVisibleChanged();
+}
+
+void CompareController::requestMetadata(int slot) {
+    if (slot < 0 || slot >= frames_.size() || !frames_.value(slot)) return;
+    metadataHandles_[slot].cancel();
+    const quint64 generation = generations_.at(slot);
+    const QPointer<CompareController> self(this);
+    metadataHandles_[slot] = loader_->requestMetadata(generation, frames_.at(slot),
+        [self, slot, generation](quint64, const DecodeResult& result) {
+            if (!self || slot >= self->generations_.size() || self->generations_.at(slot) != generation || !result.frame) return;
+            self->metadata_[slot] = result.frame->metadata;
+            ++self->revision_;
+            emit self->revisionChanged();
+        });
+}
+
+void CompareController::setExifVisible(bool visible) {
+    if (exifVisible_ == visible) return;
+    exifVisible_ = visible;
+    if (visible) for (int slot = 0; slot < frames_.size(); ++slot) requestMetadata(slot);
+    else for (const auto& handle : metadataHandles_) handle.cancel();
+    QSettings().setValue(QStringLiteral("compare/exifVisible"), visible);
+    emit exifVisibleChanged();
+}
+
+void CompareController::setHistogramVisible(bool visible) {
+    if (histogramVisible_ == visible) return;
+    histogramVisible_ = visible;
+    if (visible) {
+        ensureFullFrames();
+    }
+    QSettings().setValue(QStringLiteral("compare/histogramVisible"), visible);
+    emit histogramVisibleChanged();
+}
+
+void CompareController::setPixelValueVisible(bool visible) {
+    if (pixelValueVisible_ == visible) return;
+    pixelValueVisible_ = visible;
+    if (visible) {
+        ensureFullFrames();
+    }
+    QSettings().setValue(QStringLiteral("compare/pixelValueVisible"), visible);
+    emit pixelValueVisibleChanged();
+}
+
+void CompareController::setThumbnailVisible(bool visible) {
+    if (thumbnailVisible_ == visible) return;
+    thumbnailVisible_ = visible;
+    QSettings().setValue(QStringLiteral("compare/thumbnailVisible"), visible);
+    emit thumbnailVisibleChanged();
+}
+
+void CompareController::applyHoldFrame() {
+    refreshCanvas();
+}
+
+void CompareController::fitAll() {
+    if (canvas_) canvas_->fitAll();
+}
+
+void CompareController::actualPixelsAll() {
+    ensureFullFrames();
+    if (canvas_) canvas_->actualPixelsAll();
+}
+
+void CompareController::attachCanvas(QObject* object) {
+    auto* canvas = qobject_cast<QmlImageCanvas*>(object);
+    if (!canvas) return;
+    canvas_ = canvas;
+    // Hovering a RAW/YUV preview promotes it to the full decode so the readout can show exact
+    // source samples, exactly like the gallery probe does.
+    connect(canvas_, &QmlImageCanvas::pixelProbeFullResolutionRequested, this, [this](int slot) {
+        requestFullFrame(slot, LoadCategory::Interactive);
+    });
+    refreshCanvas(-1, true);
+}
+
+void CompareController::refreshCanvas(int changedSlot, bool resetChangedView) {
+    if (!canvas_) return;
+    QVector<ImageFramePtr> displayedFrames = frames_;
+    if (holdCandidate_ && displayedFrames.size() == 2 && displayedFrames.value(1))
+        displayedFrames[0] = displayedFrames.at(1);
+    canvas_->setFrames(displayedFrames, changedSlot, resetChangedView);
+    canvas_->setPresentationMode(presentationMode_);
+    canvas_->setCompareAmount(splitAmount_);
+    canvas_->setSynchronized(synchronized_);
+}
+
+QVariantList CompareController::pixelTexts(int sourceSlot, int x, int y) const {
+    const auto source = frame(sourceSlot);
+    // The canvas reports hover coordinates in a frame's zoom/pan space, so the source slot is
+    // sampled directly and the remaining slots map through the normalized pixel center.
+    const QSize sourceSize =
+        source ? ComparisonPixelProbe::logicalFrameSize(*source) : QSize{};
+    if (!source || sourceSize.isEmpty()) return {};
+    const QPointF normalized = ComparisonPixelProbe::normalizedPixelCenter({x, y}, sourceSize);
+    QVariantList values;
+    values.reserve(frames_.size());
+    for (int candidateSlot = 0; candidateSlot < frames_.size(); ++candidateSlot) {
+        const auto& candidate = frames_.at(candidateSlot);
+        if (!candidate) {
+            values.append(QString{});
+            continue;
+        }
+        const auto sample = candidateSlot == sourceSlot
+                                ? ComparisonPixelProbe::sampleAtLogicalPixel(*candidate, {x, y},
+                                                                             sourceSize)
+                                : ComparisonPixelProbe::sample(*candidate, normalized);
+        values.append(sample.valid
+                          ? QStringLiteral("(%1,%2) %3")
+                                .arg(sample.displayPixel.x())
+                                .arg(sample.displayPixel.y())
+                                .arg(sample.sourceValueText())
+                          : QCoreApplication::translate("ImageProperties", "Outside image"));
+    }
+    return values;
+}
+
+void CompareController::requestHistogram(int slot) {
+    if (slot < 0 || slot >= frames_.size()) return;
+    histogramRequested_[slot] = true;
+    if (!frames_.value(slot)) return;
+    requestFullFrame(slot, LoadCategory::Interactive);
+    // A preview has already changed the pixel distribution. Wait for the full decode.
+    if (!fullResolution_.value(slot)) return;
+    const QVariantMap& existing = displayHistograms_.at(slot);
+    if (existing.value(QStringLiteral("valid")).toBool() ||
+        existing.value(QStringLiteral("loading")).toBool()) return;
+    displayHistograms_[slot] = {{QStringLiteral("loading"), true}};
+    const quint64 generation = ++histogramGenerations_[slot];
+    const ImageFramePtr frame = frames_.at(slot);
+    const QPointer<CompareController> self(this);
+    histogramHandles_[slot] = loader_->requestAnalysis([frame](const auto& cancelled) {
+        return displayHistogramMap(DisplayHistogramAnalyzer::analyzeLuma(*frame, cancelled));
+    }, [self, slot, generation](QVariantMap result) {
+        if (self) self->completeHistogram(slot, generation, std::move(result));
+    });
+}
+
+QVariantMap CompareController::histogram(int slot) const {
+    return slot >= 0 && slot < frames_.size() ? displayHistograms_.value(slot) : QVariantMap{};
+}
+
+void CompareController::completeHistogram(int slot, quint64 generation, QVariantMap value) {
+    if (slot < 0 || slot >= histogramGenerations_.size()
+        || histogramGenerations_.at(slot) != generation) return;
+    displayHistograms_[slot] = std::move(value);
+    ++histogramRevision_;
+    emit histogramChanged(slot);
+    emit histogramRevisionChanged();
+}
+
+void CompareController::clearHistograms(int slot) {
+    if (slot < 0 || slot >= frames_.size()) return;
+    histogramHandles_[slot].cancel();
+    ++histogramGenerations_[slot];
+    displayHistograms_[slot] = {};
+    ++histogramRevision_;
+    emit histogramChanged(slot);
+    emit histogramRevisionChanged();
+}
+
+} // namespace mvpview

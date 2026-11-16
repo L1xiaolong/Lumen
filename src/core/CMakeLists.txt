@@ -1,0 +1,32 @@
+qt_add_library(mvpview_core STATIC
+    bayer_image_renderer.h
+    bayer_image_renderer.cpp
+    color_conversion.h
+    color_conversion.cpp
+    display_color_space.h
+    display_color_space.cpp
+    display_histogram.h
+    display_histogram.cpp
+    histogram_sampling.h
+    comparison_pixel_probe.h
+    comparison_pixel_probe.cpp
+    image_types.h
+    pixel_memory_ledger.h
+    nominal_gpu_bytes.h
+    raw_image_parameters.h
+    raw_image_parameters.cpp
+    raw_plane_access.h
+    raw_plane_access.cpp
+    raw_plane_histogram.h
+    raw_plane_histogram.cpp
+    yuv_plane_view.h
+    view_state.h
+    view_state.cpp
+    sync_group.h
+    sync_group.cpp
+    weighted_lru_cache.h
+)
+
+target_include_directories(mvpview_core PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(mvpview_core PUBLIC Qt6::Core Qt6::Gui)
+mvpview_enable_warnings(mvpview_core)

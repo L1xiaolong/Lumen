@@ -1,0 +1,473 @@
+#include "io/raw_image_decoder.h"
+
+#include "core/color_conversion.h"
+#include "core/raw_plane_access.h"
+
+#include <QFile>
+#include <QFileInfo>
+#include <QColorSpace>
+#include <QStringList>
+#include <QtEndian>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <new>
+
+namespace mvpview {
+namespace {
+// Full frames keep source planes for GPU display and exact probes. The CPU image is an
+// emergency fallback, so bounding it avoids repeating a full-resolution demosaic before
+// the plane texture can be submitted.
+constexpr QSize kFullFallbackMaximumSize{960, 720};
+
+int toByte(double value) {
+    return std::clamp(static_cast<int>(std::lround(value * 255.0)), 0, 255);
+}
+
+quint16 read16(const char* bytes, bool littleEndian) {
+    const auto* source = reinterpret_cast<const uchar*>(bytes);
+    return littleEndian ? qFromLittleEndian<quint16>(source) : qFromBigEndian<quint16>(source);
+}
+
+bool checkedFrameOffset(const RawImageParameters& parameters, qsizetype frameSize,
+                        qsizetype fileSize, qsizetype& offset) {
+    if (frameSize <= 0 || parameters.headerOffset < 0 || parameters.frameIndex < 0 ||
+        parameters.frameIndex >
+            (std::numeric_limits<qsizetype>::max() - parameters.headerOffset) / frameSize) {
+        return false;
+    }
+    offset = parameters.headerOffset + static_cast<qsizetype>(parameters.frameIndex) * frameSize;
+    return offset <= fileSize && frameSize <= fileSize - offset;
+}
+
+qsizetype rowStride(const RawImageParameters& parameters) {
+    return parameters.rowStride > 0 ? parameters.rowStride : minimumRowStride(parameters);
+}
+
+qsizetype chromaStride(const RawImageParameters& parameters) {
+    if (parameters.chromaStride > 0) {
+        return parameters.chromaStride;
+    }
+    return minimumChromaRowStride(parameters);
+}
+
+// Reduced YUV images need only a few source rows at a time. In particular, do not
+// allocate/cache a 72 MB source frame for each 256 px thumbnail in a cold folder.
+// Read active row bytes only; large user-specified padding is not pixel storage.
+class YuvSampleSource final {
+  public:
+    YuvSampleSource(const QByteArray& bytes, const RawImageParameters& parameters,
+                    QFile* file = nullptr, qsizetype frameOffset = 0)
+        : bytes_(bytes), parameters_(parameters), file_(file), frameOffset_(frameOffset) {}
+
+    static qsizetype workingBytes(const RawImageParameters& parameters) {
+        const auto chroma = minimumChromaRowStride(parameters);
+        return addedAllocationBytes(minimumRowStride(parameters) * 4,
+            chroma * (parameters.format == RawPixelFormat::I420 ? 8 : 4));
+    }
+
+    void beginOutputRow() {
+        for (auto& plane : rows_) for (auto& row : plane) row.pinned = false;
+    }
+
+    const char* row(int plane, int y) {
+        const qsizetype stride = plane == 0 ? rowStride(parameters_) : chromaStride(parameters_);
+        const qsizetype planeOffset = plane == 0 ? 0 : rowStride(parameters_) * parameters_.size.height() +
+            (plane == 2 ? stride * ((parameters_.size.height() + 1) / 2) : 0);
+        const char* data = nullptr;
+        if (!file_) {
+            data = bytes_.constData() + planeOffset + y * stride;
+        } else {
+            auto& rows = rows_[static_cast<std::size_t>(plane)];
+            for (auto& row : rows) {
+                if (row.index == y) { row.pinned = true; data = row.bytes.constData(); break; }
+            }
+            if (!data && error_.isEmpty()) {
+                auto& next = nextRow_[static_cast<std::size_t>(plane)];
+                // A cache hit can occupy the next FIFO victim. Never invalidate
+                // a pointer already obtained for this output row.
+                for (std::size_t i = 0; i < rows.size() && rows[next % rows.size()].pinned; ++i) ++next;
+                auto& row = rows[next++ % rows.size()];
+                Q_ASSERT(!row.pinned);
+                row.pinned = true;
+                row.index = -1;
+                const qsizetype count = plane == 0 ? minimumRowStride(parameters_)
+                                                 : minimumChromaRowStride(parameters_);
+                row.bytes.resize(count);
+                if (!file_->seek(frameOffset_ + planeOffset + y * stride)) {
+                    error_ = QStringLiteral("Could not seek to a YUV source row");
+                } else {
+                    qsizetype read = 0;
+                    while (read < count) {
+                        const qint64 received = file_->read(row.bytes.data() + read, count - read);
+                        if (received <= 0) break;
+                        read += received;
+                    }
+                    if (read != count) error_ = QStringLiteral("Could not read a complete YUV source row");
+                    else { row.index = y; data = row.bytes.constData(); }
+                }
+            }
+        }
+        return data; // Conversion checks errors before using row pointers.
+    }
+
+    const QString& error() const { return error_; }
+
+  private:
+    struct Row { int index = -1; QByteArray bytes; bool pinned = false; };
+    const QByteArray& bytes_;
+    const RawImageParameters& parameters_;
+    QFile* file_;
+    qsizetype frameOffset_;
+    std::array<std::array<Row, 4>, 3> rows_;
+    std::array<std::size_t, 3> nextRow_{};
+    QString error_;
+};
+
+QImage convertYuv(YuvSampleSource& source, const RawImageParameters& parameters,
+                  const QSize& outputSize, const std::function<bool()>& cancelled) {
+    const int width = parameters.size.width();
+    const int height = parameters.size.height();
+    const DisplayColorSpace displaySpace = currentDisplayColorSpace();
+    const YuvDisplayTransform displayTransform(parameters, displaySpace);
+    const auto matrix = yuvCoefficients(parameters.yuvMatrix);
+    const int bits = parameters.format == RawPixelFormat::P010 ? 10 : 8;
+    const double maximum = static_cast<double>((1 << bits) - 1);
+    const double yOffset =
+        parameters.range == QuantizationRange::Limited ? 16.0 * (1 << (bits - 8)) : 0.0;
+    const double yScale =
+        parameters.range == QuantizationRange::Limited ? 219.0 * (1 << (bits - 8)) : maximum;
+    const double cCenter = static_cast<double>(1 << (bits - 1));
+    const double cScale =
+        parameters.range == QuantizationRange::Limited ? 224.0 * (1 << (bits - 8)) : maximum;
+
+    const int chromaWidth = (width + 1) / 2;
+    const int chromaHeight = (height + 1) / 2;
+    const auto sample = [&](const char* row, int x) -> int {
+        if (bits == 8) return static_cast<uchar>(row[x]);
+        const quint16 value = read16(row + x * 2, parameters.littleEndian);
+        return parameters.msbAligned ? value >> 6 : value & 0x03FF;
+    };
+    struct SampleRows {
+        const char* luma;
+        std::array<const char*, 2> top;
+        std::array<const char*, 2> bottom;
+        double fy;
+    };
+    const auto prepareRows = [&](int y) {
+        const double chromaY = std::clamp(
+            (y + 0.5) * chromaHeight / height - 0.5, 0.0,
+            static_cast<double>(chromaHeight - 1));
+        const int y0 = static_cast<int>(std::floor(chromaY));
+        const int y1 = std::min(y0 + 1, chromaHeight - 1);
+        SampleRows rows{source.row(0, y), {source.row(1, y0), nullptr},
+                        {source.row(1, y1), nullptr}, chromaY - y0};
+        if (parameters.format == RawPixelFormat::I420) {
+            rows.top[1] = source.row(2, y0);
+            rows.bottom[1] = source.row(2, y1);
+        }
+        return rows;
+    };
+    auto chromaAt = [&](int chromaX, const std::array<const char*, 2>& rows) {
+        int uValue = 0;
+        int vValue = 0;
+        if (parameters.format == RawPixelFormat::I420) {
+            uValue = sample(rows[0], chromaX);
+            vValue = sample(rows[1], chromaX);
+        } else {
+            const int first = sample(rows[0], chromaX * 2);
+            const int second = sample(rows[0], chromaX * 2 + 1);
+            const bool vu = parameters.format == RawPixelFormat::NV21;
+            uValue = vu ? second : first;
+            vValue = vu ? first : second;
+        }
+        return std::array<double, 2>{static_cast<double>(uValue),
+                                     static_cast<double>(vValue)};
+    };
+    auto rgbAt = [&](int x, const SampleRows& rows) {
+        const int yValue = sample(rows.luma, x);
+        const double chromaX = std::clamp(
+            parameters.chromaLocation == ChromaLocation::Left
+                ? static_cast<double>(x) * chromaWidth / width
+                : (x + 0.5) * chromaWidth / width - 0.5,
+            0.0, static_cast<double>(chromaWidth - 1));
+        const int x0 = static_cast<int>(std::floor(chromaX));
+        const int x1 = std::min(x0 + 1, chromaWidth - 1);
+        const double fx = chromaX - x0;
+        const double fy = rows.fy;
+        const auto topLeft = chromaAt(x0, rows.top);
+        const auto topRight = chromaAt(x1, rows.top);
+        const auto bottomLeft = chromaAt(x0, rows.bottom);
+        const auto bottomRight = chromaAt(x1, rows.bottom);
+        std::array<double, 2> chroma{};
+        for (std::size_t channel = 0; channel < chroma.size(); ++channel) {
+            const double top = topLeft[channel] * (1.0 - fx) + topRight[channel] * fx;
+            const double bottom = bottomLeft[channel] * (1.0 - fx) + bottomRight[channel] * fx;
+            chroma[channel] = top * (1.0 - fy) + bottom * fy;
+        }
+        const double luma = (yValue - yOffset) / yScale;
+        const double u = (chroma[0] - cCenter) / cScale;
+        const double v = (chroma[1] - cCenter) / cScale;
+        return displayTransform.convert(
+            {luma + matrix.redV * v,
+             luma - matrix.greenU * u - matrix.greenV * v,
+             luma + matrix.blueU * u});
+    };
+    auto writePixel = [](uchar* destination, const std::array<double, 3>& rgb) {
+        destination[0] = static_cast<uchar>(toByte(rgb[0]));
+        destination[1] = static_cast<uchar>(toByte(rgb[1]));
+        destination[2] = static_cast<uchar>(toByte(rgb[2]));
+        destination[3] = 255;
+    };
+
+    QImage image(outputSize, QImage::Format_RGBA8888);
+    // QImage reports allocation failure with a null image. Never write scanlines
+    // until storage exists, especially for full-resolution YUV display requests.
+    if (image.isNull()) return {};
+    const bool fullSize = outputSize == parameters.size;
+    for (int y = 0; y < outputSize.height(); ++y) {
+        if (cancelled && cancelled()) return {};
+        auto* destination = image.scanLine(y);
+        const double sourceY = fullSize ? y :
+            std::clamp((y + 0.5) * height / outputSize.height() - 0.5, 0.0, height - 1.0);
+        const int y0 = static_cast<int>(std::floor(sourceY));
+        const int y1 = std::min(y0 + 1, height - 1);
+        const double fy = sourceY - y0;
+        // At most two luma and three chroma rows are pinned while processing
+        // this output row; the four-row caches keep these pointers stable.
+        source.beginOutputRow();
+        const auto topRows = prepareRows(y0);
+        const auto bottomRows = fy == 0.0 ? topRows : prepareRows(y1);
+        if (!source.error().isEmpty()) return {};
+        for (int x = 0; x < outputSize.width(); ++x) {
+            if (fullSize) {
+                writePixel(destination + x * 4, rgbAt(x, topRows));
+                continue;
+            }
+            const double sourceX =
+                std::clamp((x + 0.5) * width / outputSize.width() - 0.5, 0.0, width - 1.0);
+            const int x0 = static_cast<int>(std::floor(sourceX));
+            const int x1 = std::min(x0 + 1, width - 1);
+            const double fx = sourceX - x0;
+            const auto topLeft = rgbAt(x0, topRows);
+            const auto topRight = fx == 0.0 ? topLeft : rgbAt(x1, topRows);
+            const auto bottomLeft = fy == 0.0 ? topLeft : rgbAt(x0, bottomRows);
+            const auto bottomRight = fy == 0.0 ? topRight :
+                fx == 0.0 ? bottomLeft : rgbAt(x1, bottomRows);
+            std::array<double, 3> interpolated{};
+            for (std::size_t channel = 0; channel < interpolated.size(); ++channel) {
+                const double top = topLeft[channel] * (1.0 - fx) + topRight[channel] * fx;
+                const double bottom = bottomLeft[channel] * (1.0 - fx) + bottomRight[channel] * fx;
+                interpolated[channel] = top * (1.0 - fy) + bottom * fy;
+            }
+            writePixel(destination + x * 4, interpolated);
+        }
+    }
+    image.setColorSpace(displayQColorSpace(displaySpace));
+    return image;
+}
+} // namespace
+
+QString RawImageDecoder::cacheIdentity() const {
+    return QStringLiteral("headerless-raw-v5|display-%1")
+        .arg(displayColorSpaceKey(currentDisplayColorSpace()));
+}
+
+bool RawImageDecoder::canDecode(const QString& path) const {
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    return suffix == QStringLiteral("yuv") || suffix == QStringLiteral("raw");
+}
+
+DecodeResult RawImageDecoder::decode(const DecodeRequest& request) const try {
+    if (!request.rawParameters) {
+        return {{}, QStringLiteral("RAW/YUV parameters are required")};
+    }
+    const RawImageParameters& parameters = *request.rawParameters;
+    if (!parameters.hasValidBitLayout()) {
+        return {{},
+                QStringLiteral("Valid-bit override is supported only for RAW16 and must be "
+                               "between 1 and 16 (or 0 for the format default)")};
+    }
+    const int formatMaximum = parameters.maximumSampleValue();
+    if (parameters.blackLevel < 0 || parameters.blackLevel >= formatMaximum ||
+        (parameters.whiteLevel > 0 && (parameters.whiteLevel <= parameters.blackLevel ||
+                                       parameters.whiteLevel > formatMaximum))) {
+        return {{}, QStringLiteral("Black/white levels must fit the effective sample bit depth")};
+    }
+    if (!parameters.hasValidDisplayTransform() || !parameters.hasValidBayerSampling() ||
+        !parameters.hasValidYuvColorDescription()) {
+        return {{}, QStringLiteral("White balance, CCM, or display gamma is invalid")};
+    }
+    if (!parameters.hasValidOrientation()) {
+        return {{}, QStringLiteral("RAW/YUV orientation is invalid")};
+    }
+    if (request.isCancelled()) return {{}, QStringLiteral("Cancelled")};
+    const qsizetype frameSize = frameByteSize(parameters);
+    const QFileInfo sourceInfo(request.path);
+    qsizetype offset = 0;
+    if (!checkedFrameOffset(parameters, frameSize, sourceInfo.size(), offset)) {
+        return {{}, QStringLiteral("RAW/YUV parameters exceed the file bounds")};
+    }
+    // Source identity describes storage, not the display transform. Colour, white
+    // balance and orientation edits reuse bytes; another frame/layout is independent.
+    const QString sourceKey = QStringList{
+        QStringLiteral("raw-v2"), sourceInfo.absoluteFilePath(), QString::number(sourceInfo.size()),
+        QString::number(sourceInfo.lastModified().toMSecsSinceEpoch()),
+        QString::number(parameters.frameIndex), QString::number(offset), QString::number(frameSize),
+        QString::number(parameters.size.width()), QString::number(parameters.size.height()),
+        QString::number(int(parameters.format)), QString::number(rowStride(parameters)),
+        QString::number(chromaStride(parameters)), QString::number(parameters.littleEndian),
+        QString::number(parameters.msbAligned), QString::number(parameters.validBits())
+    }.join(QLatin1Char('|'));
+    const auto cachedSource = request.sourceCache ? request.sourceCache->get(sourceKey) : nullptr;
+    QSize plannedOutput = orientedImageSize(parameters.size, parameters.orientation);
+    const QSize plannedMaximum = request.purpose == DecodePurpose::Full && !request.requireDisplayImage
+        ? kFullFallbackMaximumSize : request.maximumSize;
+    if (!plannedMaximum.isEmpty() && (plannedOutput.width() > plannedMaximum.width() ||
+                                     plannedOutput.height() > plannedMaximum.height()))
+        plannedOutput = plannedOutput.scaled(plannedMaximum, Qt::KeepAspectRatio);
+    const bool streamYuv = parameters.isYuv() && request.purpose != DecodePurpose::Full && !cachedSource;
+    const qsizetype sourceCost = cachedSource ? 0 : streamYuv ? YuvSampleSource::workingBytes(parameters) : frameSize;
+    if (!request.prepareAllocation(addedAllocationBytes(
+            addedAllocationBytes(sourceCost, streamYuv ? 0 : frameSize), estimatedPixelBytes(plannedOutput, 32))))
+        return {{}, QStringLiteral("Cancelled")};
+    QByteArray bytes = cachedSource ? cachedSource->bytes : QByteArray{};
+
+    QFile file(request.path);
+    if (!cachedSource) {
+        if (!file.open(QIODevice::ReadOnly)) return {{}, file.errorString()};
+        qsizetype currentOffset = 0;
+        if (!checkedFrameOffset(parameters, frameSize, file.size(), currentOffset) ||
+            currentOffset != offset || !file.seek(offset))
+            return {{}, QStringLiteral("RAW/YUV parameters exceed the file bounds")};
+        if (!streamYuv) {
+            bytes.resize(frameSize);
+            for (qsizetype read = 0; read < frameSize;) {
+                if (request.isCancelled()) return {{}, QStringLiteral("Cancelled")};
+                const qint64 count = file.read(bytes.data() + read,
+                    std::min<qsizetype>(1024 * 1024, frameSize - read));
+                if (count <= 0) return {{}, QStringLiteral("Could not read a complete RAW/YUV frame")};
+                read += count;
+            }
+            if (request.sourceCache && !request.isCancelled()) {
+                auto source = std::make_shared<SourceFrame>(); source->bytes = bytes;
+                request.sourceCache->put(sourceKey, std::move(source));
+            }
+        }
+    }
+    if (!streamYuv && bytes.size() != frameSize) {
+        return {{}, QStringLiteral("Could not read a complete RAW/YUV frame")};
+    }
+
+    const QSize logicalDisplaySize = orientedImageSize(parameters.size, parameters.orientation);
+    QSize outputSize = logicalDisplaySize;
+    const QSize maximumSize =
+        request.purpose == DecodePurpose::Full && !request.requireDisplayImage
+            ? kFullFallbackMaximumSize : request.maximumSize;
+    if (!maximumSize.isEmpty() &&
+        (outputSize.width() > maximumSize.width() || outputSize.height() > maximumSize.height())) {
+        outputSize.scale(maximumSize, Qt::KeepAspectRatio);
+    }
+    const QSize sourceOutputSize = orientedImageSize(outputSize, parameters.orientation);
+    const auto cancelled = [&request] { return request.isCancelled(); };
+    YuvSampleSource yuvSource(bytes, parameters, streamYuv ? &file : nullptr, offset);
+    QImage display = parameters.isYuv() ? convertYuv(yuvSource, parameters, sourceOutputSize, cancelled)
+                                        : renderBayerImage(bytes, parameters, sourceOutputSize, cancelled);
+    display = orientedImage(std::move(display), parameters.orientation);
+    if (display.isNull()) {
+        return {{}, request.isCancelled() ? QStringLiteral("Cancelled") :
+            !yuvSource.error().isEmpty() ? yuvSource.error() : QStringLiteral("RAW/YUV conversion failed")};
+    }
+    const QFileInfo info(request.path);
+    auto frame = std::make_shared<ImageFrame>();
+    frame->descriptor.size =
+        request.purpose == DecodePurpose::Full ? logicalDisplaySize : display.size();
+    frame->descriptor.layout = parameters.isYuv() ? PixelLayout::SemiPlanar : PixelLayout::Bayer;
+    if (parameters.format == RawPixelFormat::I420) {
+        frame->descriptor.layout = PixelLayout::Planar;
+    }
+    frame->descriptor.channelOrder = parameters.isYuv() ? ChannelOrder::YUV : ChannelOrder::Bayer;
+    frame->descriptor.storageBits =
+        parameters.format == RawPixelFormat::P010 || parameters.format == RawPixelFormat::Raw16
+            ? 16
+            : parameters.validBits();
+    frame->descriptor.validBits = parameters.validBits();
+    if (parameters.isYuv()) {
+        frame->descriptor.sourceColor.colorSpace = QStringLiteral("YUV");
+        frame->descriptor.sourceColor.primaries = yuvPrimariesName(parameters.yuvPrimaries);
+        frame->descriptor.sourceColor.transferFunction = yuvTransferName(parameters.yuvTransfer);
+        frame->descriptor.sourceColor.matrixCoefficients = yuvMatrixName(parameters.yuvMatrix);
+        frame->descriptor.sourceColor.chromaLocation = chromaLocationName(parameters.chromaLocation);
+        frame->descriptor.sourceColor.fullRange = parameters.range == QuantizationRange::Full;
+        applyDisplayColor(frame->descriptor.displayColor);
+        frame->descriptor.displayColor.matrixCoefficients = QStringLiteral("RGB");
+    } else if (parameters.demosaic) {
+        frame->descriptor.sourceColor.colorSpace = QStringLiteral("CFA sensor samples");
+        frame->descriptor.sourceColor.primaries = QStringLiteral("Sensor CFA");
+        frame->descriptor.sourceColor.transferFunction = QStringLiteral("Linear sensor values");
+        frame->descriptor.sourceColor.matrixCoefficients = QStringLiteral("None");
+        // The developed mosaic is a user-defined transform (CCM contract plus the user's display
+        // gamma), so it deliberately does not claim to be the application display space.
+        frame->descriptor.displayColor.colorSpace = QStringLiteral("User-defined RGB");
+        frame->descriptor.displayColor.primaries = QStringLiteral("sRGB / BT.709 (CCM contract)");
+        frame->descriptor.displayColor.transferFunction =
+            QStringLiteral("Power %1").arg(parameters.displayGamma, 0, 'g', 6);
+        frame->descriptor.displayColor.matrixCoefficients = QStringLiteral("RGB");
+    } else {
+        frame->descriptor.sourceColor.colorSpace = QStringLiteral("CFA sensor samples");
+        frame->descriptor.sourceColor.primaries = QStringLiteral("Sensor CFA");
+        frame->descriptor.sourceColor.transferFunction = QStringLiteral("Linear sensor values");
+        frame->descriptor.sourceColor.matrixCoefficients = QStringLiteral("None");
+        applyDisplayColor(frame->descriptor.displayColor, true);
+        frame->descriptor.displayColor.matrixCoefficients =
+            QStringLiteral("CFA false-colour channel mapping");
+    }
+    frame->metadata.path = info.absoluteFilePath();
+    frame->metadata.fileName = info.fileName();
+    frame->metadata.format = rawPixelFormatName(parameters.format);
+    frame->metadata.fileSize = info.size();
+    frame->metadata.modifiedAt = info.lastModified();
+    frame->metadata.decoderName = QStringLiteral("Lumen RAW/YUV");
+    frame->metadata.sourceSize = logicalDisplaySize;
+    frame->rawParameters = parameters;
+    // Only a full decode keeps the source planes the exact probes read.
+    frame->sourceSamplesPending = request.purpose != DecodePurpose::Full;
+    if (request.purpose != DecodePurpose::Full) {
+        frame->storage = std::move(display);
+    } else {
+        auto planes = std::make_shared<PlaneBufferSet>();
+        planes->storage = std::move(bytes);
+        const qsizetype primaryStride = rowStride(parameters);
+        const qsizetype primaryBytes = primaryStride * parameters.size.height();
+        planes->planes.push_back({0, primaryStride, primaryBytes});
+        if (parameters.isYuv()) {
+            const qsizetype secondaryStride = chromaStride(parameters);
+            const qsizetype secondaryBytes = secondaryStride * ((parameters.size.height() + 1) / 2);
+            planes->planes.push_back({primaryBytes, secondaryStride, secondaryBytes});
+            if (parameters.format == RawPixelFormat::I420) {
+                planes->planes.push_back(
+                    {primaryBytes + secondaryBytes, secondaryStride, secondaryBytes});
+            }
+        }
+        planes->displayImage = std::move(display);
+        frame->storage = std::shared_ptr<const PlaneBufferSet>(std::move(planes));
+    }
+    return {std::move(frame), {}};
+} catch (const std::bad_alloc&) {
+    // QByteArray and source-cache allocations may throw rather than return null.
+    // Let the loader deliver a failed image instead of terminating its worker.
+    return {{}, QStringLiteral("Not enough memory to decode RAW/YUV frame")};
+}
+
+std::optional<quint16> RawImageDecoder::bayerValueAt(const ImageFrame& frame, int x, int y) {
+    const auto sample = RawPlaneAccessor(frame).bayerAtSourcePixel({x, y});
+    return sample ? std::optional<quint16>(sample->value) : std::nullopt;
+}
+
+QString RawImageDecoder::pixelDescription(const ImageFrame& frame, int x, int y) {
+    return RawPlaneAccessor(frame).pixelDescriptionAtDisplayPixel({x, y});
+}
+} // namespace mvpview

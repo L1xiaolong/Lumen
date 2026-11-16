@@ -1,0 +1,1161 @@
+#include "io/image_loader.h"
+
+#include "io/directory_scanner.h"
+#include "diagnostics/diagnostics.h"
+#include "core/nominal_gpu_bytes.h"
+#include "io/metadata_reader.h"
+#include "io/raw_preset_store.h"
+#include "io/thumbnail_disk_cache.h"
+
+#include <QFileInfo>
+#include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QImageReader>
+#include <QMetaObject>
+#include <QMutexLocker>
+#include <QPointer>
+#include <QThread>
+#include <QThreadPool>
+
+#include <limits>
+#include <new>
+#include <exception>
+
+namespace mvpview {
+namespace {
+
+int priorityFor(const RequestOptions& options) {
+    int base = 0;
+    switch (options.category) {
+    case LoadCategory::Interactive: base = 100; break;
+    case LoadCategory::VisibleThumbnail: base = 60; break;
+    case LoadCategory::NearViewport: base = 20; break;
+    case LoadCategory::Metadata: base = -20; break;
+    case LoadCategory::Background: base = -60; break;
+    }
+    return base + options.priorityAdjustment;
+}
+
+bool isHeaderlessImage(const QString& path) {
+    const auto suffix = QFileInfo(path).suffix().toLower();
+    return suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv");
+}
+
+QString cacheKeyPrefix(const DecodeRequest& request, const QString& path, qint64 size, qint64 modifiedMs) {
+    return path + QLatin1Char('|') + QString::number(size) +
+        QLatin1Char('|') + QString::number(modifiedMs) +
+        QLatin1Char('|') + QString::number(request.maximumSize.width()) + QLatin1Char('x') +
+        QString::number(request.maximumSize.height()) + QLatin1Char('|') +
+        QString::number(static_cast<int>(request.purpose) + (request.metadataSource ? 100 : 0) +
+                        (request.requireDisplayImage ? 200 : 0));
+}
+
+QString computeDisplayRevision(const IImageDecoder& decoder) {
+    return QString::fromLatin1(QCryptographicHash::hash(decoder.cacheIdentity().toUtf8(),
+        QCryptographicHash::Sha256).toHex().left(16));
+}
+
+} // namespace
+
+void LoadHandle::cancel() const {
+    if (!state_) return;
+    const QMutexLocker nextLock(&state_->nextMutex);
+    if (state_->next) LoadHandle(state_->next).cancel();
+    bool expected = false;
+    if (state_->cancelled.compare_exchange_strong(expected, true, std::memory_order_relaxed) &&
+        state_->activeConsumers) {
+        int consumers = state_->activeConsumers->load(std::memory_order_relaxed);
+        while (consumers > 0 &&
+               !state_->activeConsumers->compare_exchange_weak(
+                   consumers, consumers == 1 ? -1 : consumers - 1, std::memory_order_relaxed)) {
+        }
+    }
+}
+
+bool LoadHandle::isCancelled() const {
+    return state_ && state_->cancelled.load(std::memory_order_relaxed);
+}
+
+ImageLoader::ImageLoader(std::shared_ptr<const IImageDecoder> decoder, QObject* parent,
+                         std::shared_ptr<ThumbnailDiskCache> diskCache)
+    : QObject(parent), decoder_(std::move(decoder)),
+      diskCache_(diskCache ? std::move(diskCache) : std::make_shared<ThumbnailDiskCache>()) {
+    Q_ASSERT(decoder_);
+    const auto cacheObserver = [ledger = cacheAccounting_](const ImageFramePtr& frame, bool added) {
+        PixelStorageFootprint footprint; frame->appendPixelStorage(footprint);
+        ledger->adjust(footprint, added);
+    };
+    thumbnailCache_.setObserver(cacheObserver);
+    previewCache_.setObserver(cacheObserver);
+    fullCache_.setObserver(cacheObserver);
+    const auto cacheRetirer = [this](auto owner, qsizetype cost) {
+        retireCacheOwner(std::move(owner), cost);
+    };
+    thumbnailCache_.setRetirer(cacheRetirer);
+    previewCache_.setRetirer(cacheRetirer);
+    fullCache_.setRetirer(cacheRetirer);
+    sourceCache_->setRetirer(cacheRetirer);
+    setMemoryBudget(kDefaultMemoryBudget);
+    pool_.setMaxThreadCount(qBound(2, QThread::idealThreadCount() - 1, 6));
+    pool_.setExpiryTimeout(10'000);
+    serializedPool_.setMaxThreadCount(1);
+    serializedPool_.setExpiryTimeout(10'000);
+    writePool_.setMaxThreadCount(1);
+    dispatchTimer_.setInterval(16);
+    connect(&dispatchTimer_, &QTimer::timeout, this, &ImageLoader::dispatch);
+    dispatchWake_.setSingleShot(true);
+    dispatchWake_.setInterval(0);
+    connect(&dispatchWake_, &QTimer::timeout, this, &ImageLoader::dispatch);
+    resourceMaintenanceTimer_.setInterval(100);
+    connect(&resourceMaintenanceTimer_, &QTimer::timeout, this, &ImageLoader::reclaimInactiveResources);
+    resourceMaintenanceTimer_.start();
+}
+
+ImageLoader::~ImageLoader() {
+    dispatchTimer_.stop();
+    dispatchWake_.stop();
+    resourceMaintenanceTimer_.stop();
+    for (auto& job : inFlight_) job.activeConsumers->store(-1);
+    resultBufferBudget_->close(); // Wake workers before waiting for them on the GUI thread.
+    decodeWorkingBudget_->close();
+    pool_.waitForDone();
+    serializedPool_.waitForDone();
+    // Empty caches while their retirement callbacks and writer are still alive.
+    sourceCache_->clear();
+    thumbnailCache_.clear();
+    previewCache_.clear();
+    fullCache_.clear();
+    sourceCache_->setRetirer({});
+    writePool_.waitForDone();
+}
+
+LoadHandle ImageLoader::request(quint64 requestId, DecodeRequest request, Callback callback,
+                                int priority) {
+    return requestImpl(requestId, std::move(request), std::move(callback), priority);
+}
+
+LoadHandle ImageLoader::request(quint64 requestId, DecodeRequest request, Callback callback,
+                                RequestOptions options) {
+    return requestImpl(requestId, std::move(request), std::move(callback), priorityFor(options), options.viewportManaged);
+}
+
+LoadHandle ImageLoader::requestAnalysis(AnalysisWork work, std::function<void(QVariantMap)> callback) {
+    if (inFlight_.size() >= 512) { callback({}); return {}; }
+    auto state = std::make_shared<LoadHandle::State>();
+    state->activeConsumers = std::make_shared<std::atomic_int>(1);
+    const auto consumers = state->activeConsumers;
+    const QString key = QStringLiteral("analysis:%1").arg(++nextInFlightGeneration_);
+    InFlightRequest job; job.priority = -20; job.generation = nextInFlightGeneration_; job.queuedAt.start();
+    job.activeConsumers = consumers;
+    const QPointer<ImageLoader> self(this);
+    job.work = [self, consumers, key, work = std::move(work), callback = std::move(callback)] {
+        const auto cancelled = [consumers] { return consumers->load() <= 0; };
+        QVariantMap result = cancelled() ? QVariantMap{} : work(cancelled);
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, consumers, key, result = std::move(result), callback] {
+            if (!self) return;
+            --self->parallelRunning_;
+            self->completions_.push_back([self, consumers, key, result, callback] {
+                if (!self) return;
+                self->inFlight_.remove(key);
+                if (consumers->load() > 0) callback(result);
+            });
+            self->scheduleDispatch();
+        }, Qt::QueuedConnection);
+    };
+    inFlight_.insert(key, std::move(job));
+    scheduleDispatch();
+    return LoadHandle(state);
+}
+
+LoadHandle ImageLoader::requestMetadata(quint64 id, ImageFramePtr frame, Callback callback) {
+    if (!frame) return {};
+    DecodeRequest request{frame->metadata.path, DecodePurpose::Full};
+    request.metadataSource = std::move(frame);
+    return this->request(id, std::move(request), std::move(callback),
+                         RequestOptions{LoadCategory::Metadata, 0, QStringLiteral("metadata")});
+}
+
+LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Callback callback,
+                                    int priority, bool viewportManaged, std::optional<FileSnapshot> snapshot) {
+    Q_ASSERT(thread() == QThread::currentThread());
+    if (!snapshot) {
+        if (inFlight_.size() >= 512 && priority < 60) {
+            callback(requestId, {{}, QStringLiteral("Background queue is full")});
+            return {};
+        }
+        if (!request.rawParameters) request.rawParameters = rawParameters(request.path);
+        const bool inferParameters = !request.rawParameters && isHeaderlessImage(request.path);
+        auto state = std::make_shared<LoadHandle::State>();
+        state->activeConsumers = std::make_shared<std::atomic_int>(1);
+        const QString key = QStringLiteral("stat:%1").arg(++nextInFlightGeneration_);
+        InFlightRequest job;
+        job.activeConsumers = state->activeConsumers;
+        job.generation = nextInFlightGeneration_;
+        job.path = request.path;
+        job.priority = priority;
+        job.purpose = request.purpose;
+        job.viewportPriorityKnown = !viewports_.isEmpty();
+        job.pending.push_back({requestId, {}, state, priority, viewportManaged});
+        job.queuedAt.start();
+        const QPointer<ImageLoader> self(this);
+        job.work = [self, key, state, requestId, request = std::move(request),
+                    callback = std::move(callback), priority, viewportManaged, inferParameters]() mutable {
+            FileSnapshot info;
+            if (!state->cancelled.load()) {
+                const QFileInfo file(request.path);
+                info.absolutePath = file.absoluteFilePath();
+                info.browsable = DirectoryScanner::isBrowsableEntry(file) && file.isFile();
+                info.size = file.size();
+                info.modifiedMs = file.lastModified().toMSecsSinceEpoch();
+                if (info.browsable && inferParameters && !state->cancelled.load()) {
+                    request.rawParameters = RawPresetStore::loadForFile(request.path);
+                    if (!request.rawParameters) request.rawParameters = RawPresetStore::inferFromFileName(request.path);
+                    if (request.rawParameters && availableFrameCount(info.size, *request.rawParameters) <= 0)
+                        request.rawParameters.reset();
+                }
+            }
+            QMetaObject::invokeMethod(self, [self, key, state, requestId, request = std::move(request),
+                                            callback = std::move(callback), priority, viewportManaged, info, inferParameters]() mutable {
+                if (!self) return;
+                --self->parallelRunning_;
+                self->inFlight_.remove(key);
+                self->scheduleDispatch();
+                if (state->cancelled.load()) return;
+                if (self->fileSnapshots_.size() >= 512) self->fileSnapshots_.clear();
+                self->fileSnapshots_.insert(request.path, info);
+                if (inferParameters) {
+                    if (request.rawParameters) self->adoptRawParameters(request.path, *request.rawParameters);
+                    request.rawParameters = self->rawParameters(request.path);
+                }
+                auto next = self->requestImpl(requestId, std::move(request),
+                    [state, callback = std::move(callback)](quint64 id, const DecodeResult& result) {
+                        if (!state->cancelled.load()) callback(id, result);
+                    }, priority, viewportManaged, info);
+                const QMutexLocker lock(&state->nextMutex);
+                state->next = next.state_;
+                if (state->cancelled.load()) next.cancel();
+            }, Qt::QueuedConnection);
+        };
+        inFlight_.insert(key, std::move(job));
+        scheduleDispatch();
+        return LoadHandle(state);
+    }
+    if (request.purpose == DecodePurpose::Preview && request.maximumSize.isValid()) {
+        const int edge = std::max(request.maximumSize.width(), request.maximumSize.height());
+        for (const int bucket : {512, 1024, 1536, 2048, 2560}) {
+            if (edge <= bucket) { request.maximumSize = QSize(bucket, bucket); break; }
+        }
+    }
+    const int consumerPriority = priority;
+    if (request.purpose == DecodePurpose::Thumbnail) {
+        const int demand = viewportPriority(request.path);
+        if (demand > -1000) priority = viewportManaged ? demand : std::max(priority, demand);
+    }
+    const auto& sourceInfo = *snapshot;
+    if (!sourceInfo.browsable) {
+        callback(requestId, {{}, QStringLiteral("File is hidden, unreadable, or unavailable")});
+        return {};
+    }
+    if (!request.rawParameters) {
+        request.rawParameters = rawParameters(request.path);
+    }
+    if (!request.rawParameters && decoder_->executionMode(request.path) == DecodeExecutionMode::Parallel)
+        request.requireDisplayImage = false; // Encoded images already contain their full CPU image.
+    const QString keyPrefix = cacheKeyPrefix(request, sourceInfo.absolutePath, sourceInfo.size, sourceInfo.modifiedMs);
+    const QString decoderIdentity = decoder_->cacheIdentity();
+    const auto candidateKey = [&sourceInfo, &decoderIdentity](const DecodeRequest& candidate) {
+        return cacheKeyPrefix(candidate, sourceInfo.absolutePath, sourceInfo.size, sourceInfo.modifiedMs) + QLatin1Char('|') +
+            (candidate.rawParameters ? candidate.rawParameters->cacheKey() : QStringLiteral("encoded")) +
+            QLatin1Char('|') + decoderIdentity;
+    };
+    const QString key = keyPrefix + QLatin1Char('|') +
+        (request.rawParameters ? request.rawParameters->cacheKey() : QStringLiteral("encoded")) +
+        QLatin1Char('|') + decoderIdentity;
+    ImageFramePtr reusable;
+    if (request.purpose == DecodePurpose::Preview) {
+        DecodeRequest candidate = request; candidate.purpose = DecodePurpose::Full; candidate.maximumSize = {};
+        reusable = fullCache_.get(candidateKey(candidate));
+        if (!reusable) for (const int bucket : {512, 1024, 1536, 2048, 2560}) {
+            if (bucket < request.maximumSize.width()) continue;
+            candidate = request; candidate.maximumSize = QSize(bucket, bucket);
+            if ((reusable = previewCache_.get(candidateKey(candidate)))) break;
+        }
+    }
+    if (!reusable && request.purpose == DecodePurpose::Thumbnail) {
+        for (const int bucket : {128, 256, 384, 512}) {
+            if (bucket < std::max(request.maximumSize.width(), request.maximumSize.height())) continue;
+            auto candidate = request; candidate.maximumSize = QSize(bucket, bucket);
+            if ((reusable = thumbnailCache_.get(candidateKey(candidate)))) break;
+        }
+    }
+    if (auto cached = reusable ? reusable : cacheFor(request.purpose).get(key)) {
+
+        if (request.purpose == DecodePurpose::Thumbnail) {
+            const QSize sourceSize = cached->metadata.sourceSize.isValid()
+                                         ? cached->metadata.sourceSize
+                                         : cached->descriptor.size;
+            const int validBits = cached->rawParameters
+                                      ? cached->rawParameters->validBits()
+                                      : cached->descriptor.validBits;
+            emit thumbnailMetadataReady(request.path, sourceSize, validBits);
+        }
+        callback(requestId, {std::move(cached), {}});
+        return {};
+    }
+    ImageFramePtr thumbnailSource;
+    if (request.purpose == DecodePurpose::Thumbnail && request.maximumSize.isValid()) {
+        const int edge = std::max(request.maximumSize.width(), request.maximumSize.height());
+        const auto adequate = [edge](const ImageFramePtr& frame) {
+            const auto* image = frame ? frame->qImage() : nullptr;
+            if (!image || image->isNull()) return false;
+            const QSize source = frame->metadata.sourceSize;
+            return std::max(image->width(), image->height()) >= edge ||
+                (source.isValid() && std::max(source.width(), source.height()) <= edge);
+        };
+        // Prefer the smallest prepared display preview, not a full source allocation.
+        for (const int bucket : {512, 1024, 1536, 2048, 2560}) {
+            if (bucket < edge || thumbnailSource) continue;
+            for (const bool cpuDisplay : {false, true}) {
+                auto candidate = request; candidate.purpose = DecodePurpose::Preview;
+                candidate.maximumSize = {bucket, bucket}; candidate.requireDisplayImage = cpuDisplay;
+                auto source = previewCache_.get(candidateKey(candidate));
+                if (adequate(source)) { thumbnailSource = std::move(source); break; }
+            }
+        }
+        if (!thumbnailSource) for (const bool cpuDisplay : {false, true}) {
+            auto candidate = request; candidate.purpose = DecodePurpose::Full;
+            candidate.maximumSize = {}; candidate.requireDisplayImage = cpuDisplay;
+            auto source = fullCache_.get(candidateKey(candidate));
+            if (adequate(source)) { thumbnailSource = std::move(source); break; }
+        }
+    }
+    if (inFlight_.size() >= 512 && priority < 60) {
+        callback(requestId, {{}, QStringLiteral("Background queue is full")});
+        return {};
+    }
+    auto state = std::make_shared<LoadHandle::State>();
+    if (auto found = inFlight_.find(key); found != inFlight_.end()) {
+        int consumers = found->activeConsumers->load(std::memory_order_relaxed);
+        while (consumers >= 0) {
+            if (found->activeConsumers->compare_exchange_weak(
+                    consumers, consumers + 1, std::memory_order_relaxed)) {
+                state->activeConsumers = found->activeConsumers;
+                found->pending.push_back({requestId, std::move(callback), state, consumerPriority, viewportManaged});
+                found->priority = std::max(found->priority, priority);
+                if (found->workingPriority) found->workingPriority->store(found->priority);
+                decodeWorkingBudget_->wakeWaiters();
+                scheduleDispatch();
+                return LoadHandle(state);
+            }
+        }
+        // The worker already committed to skipping an unobserved request. Replace that
+        // generation instead of attaching a new consumer to a result that will be empty.
+        inFlight_.erase(found);
+    }
+    auto activeConsumers = std::make_shared<std::atomic_int>(1);
+    state->activeConsumers = activeConsumers;
+    InFlightRequest inFlight;
+    inFlight.activeConsumers = activeConsumers;
+    inFlight.generation = ++nextInFlightGeneration_;
+    const quint64 generation = inFlight.generation;
+    inFlight.path = request.path;
+    inFlight.priority = priority;
+    inFlight.workingPriority = std::make_shared<std::atomic_int>(priority);
+    inFlight.purpose = request.purpose;
+    inFlight.viewportPriorityKnown = !viewports_.isEmpty();
+    inFlight.serialized = !request.metadataSource && !thumbnailSource &&
+        decoder_->executionMode(request.path) == DecodeExecutionMode::Serialized;
+    inFlight.queuedAt.start();
+    request.activeConsumers = activeConsumers;
+    request.sourceCache = sourceCache_;
+    inFlight.pending.push_back({requestId, std::move(callback), state, consumerPriority, viewportManaged});
+    inFlight_.insert(key, std::move(inFlight));
+
+    const QPointer<ImageLoader> self(this);
+    const auto decoder = decoder_;
+    const auto diskCache = diskCache_;
+    const auto pendingWrites = pendingWrites_;
+    const auto resultBufferBudget = resultBufferBudget_;
+    const auto decodeWorkingBudget = decodeWorkingBudget_;
+    const auto residentAccounting = residentAccounting_;
+    const auto workingPriority = inFlight_[key].workingPriority;
+    // Preserve this request's file-version snapshot, rather than re-stat a file
+    // that may have changed by the time its decode is delivered.
+    QStringList obsoletePreviewPrefixes, coveringPreviewPrefixes;
+    QString coveringFullPrefix;
+    if (!request.metadataSource && request.purpose != DecodePurpose::Thumbnail) {
+        auto candidate = request;
+        candidate.purpose = DecodePurpose::Full;
+        candidate.maximumSize = {};
+        coveringFullPrefix = cacheKeyPrefix(candidate, sourceInfo.absolutePath, sourceInfo.size, sourceInfo.modifiedMs);
+        candidate.purpose = DecodePurpose::Preview;
+        const int edge = std::max(request.maximumSize.width(), request.maximumSize.height());
+        for (const int bucket : {512, 1024, 1536, 2048, 2560}) {
+            candidate.maximumSize = {bucket, bucket};
+            if ((request.purpose == DecodePurpose::Full && request.maximumSize.isEmpty()) ||
+                (request.purpose == DecodePurpose::Preview && edge <= 2560 && bucket < edge))
+                obsoletePreviewPrefixes.append(cacheKeyPrefix(candidate, sourceInfo.absolutePath, sourceInfo.size, sourceInfo.modifiedMs));
+            else if (bucket > edge)
+                coveringPreviewPrefixes.append(cacheKeyPrefix(candidate, sourceInfo.absolutePath, sourceInfo.size, sourceInfo.modifiedMs));
+        }
+    }
+    inFlight_[key].work =
+        [self, decoder, diskCache, request = std::move(request), key, keyPrefix, decoderIdentity, generation,
+         activeConsumers, pendingWrites, resultBufferBudget, decodeWorkingBudget, workingPriority, residentAccounting,
+         obsoletePreviewPrefixes, coveringPreviewPrefixes, coveringFullPrefix,
+         thumbnailSource = std::move(thumbnailSource)]() mutable {
+            std::shared_ptr<ResultBufferBudget::Reservation> workingReservation;
+            qint64 workingWaitMs = 0;
+            request.reserveWorkingMemory = [&](qsizetype bytes) {
+                workingReservation.reset();
+                QElapsedTimer wait; wait.start();
+                workingReservation = decodeWorkingBudget->reserve(bytes,
+                    [&request] { return request.isCancelled(); },
+                    [workingPriority] { return workingPriority->load(); });
+                workingWaitMs += wait.elapsed();
+
+                return bool(workingReservation);
+            };
+            DecodeResult result;
+            const bool abandoned = request.isCancelled();
+            std::shared_ptr<ResultBufferBudget::Reservation> resultReservation;
+            QElapsedTimer decodeTimer;
+            bool diskHit = false;
+            qint64 decodeElapsedMs = 0;
+            try {
+                if (!abandoned && !thumbnailSource && request.purpose == DecodePurpose::Thumbnail) {
+                    QImage cachedImage = diskCache->load(key);
+                    if (!cachedImage.isNull()) {
+                        const QFileInfo info(request.path);
+                        auto frame = std::make_shared<ImageFrame>();
+                        frame->descriptor.size = cachedImage.size();
+                        frame->metadata.path = info.absoluteFilePath();
+                        frame->metadata.fileName = info.fileName();
+                        frame->metadata.format = info.suffix().toUpper();
+                        frame->metadata.fileSize = info.size();
+                        frame->metadata.modifiedAt = info.lastModified();
+                        frame->descriptor.validBits = request.rawParameters
+                                                          ? request.rawParameters->validBits()
+                                                          : cachedImage
+                                                                .text(QStringLiteral(
+                                                                    "mvpview.validBits"))
+                                                                .toInt();
+                        if (frame->descriptor.validBits <= 0) {
+                            frame->descriptor.validBits = 8;
+                        }
+                        if (request.rawParameters && request.rawParameters->size.isValid()) {
+                            frame->metadata.sourceSize = request.rawParameters->size;
+                        } else {
+                            const QSize cachedSourceSize(
+                                cachedImage.text(QStringLiteral("mvpview.sourceWidth")).toInt(),
+                                cachedImage.text(QStringLiteral("mvpview.sourceHeight")).toInt());
+                            if (cachedSourceSize.isValid()) {
+                                frame->metadata.sourceSize = cachedSourceSize;
+                            }
+                            // The disk cache stores only preview pixels. Probe the original header on
+                            // this worker thread so legacy cache entries still report source dimensions
+                            // instead of the cached 160×120 bitmap size.
+                            if (!frame->metadata.sourceSize.isValid()) {
+                                QImageReader sourceReader(request.path);
+                                frame->metadata.sourceSize = sourceReader.size();
+                            }
+                        }
+                        if (frame->metadata.sourceSize.isValid()) {
+                            frame->storage = std::move(cachedImage);
+                            result.frame = std::move(frame);
+                        }
+                        // Formats such as DNG are not understood by QImageReader. When the source
+                        // size is unavailable, leave the cache result empty so the decoder rebuilds
+                        // the frame with its source metadata and RAW parameters.
+                    }
+                }
+                decodeTimer.start();
+                diskHit = bool(result.frame);
+                if (!abandoned && !request.isCancelled() && !result.frame) {
+                    if (thumbnailSource) {
+                        const auto* source = thumbnailSource->qImage();
+                        const auto estimate = addedAllocationBytes(estimatedPixelBytes(source->size(),16),
+                            estimatedPixelBytes(request.maximumSize,32));
+                        if (request.prepareAllocation(estimate)) {
+                            QImage image = *source;
+                            if (image.width() > request.maximumSize.width() || image.height() > request.maximumSize.height())
+                                image = image.scaled(request.maximumSize,Qt::KeepAspectRatio,Qt::SmoothTransformation);
+                            if (!request.isCancelled()) {
+                                auto frame = std::make_shared<ImageFrame>();
+                                frame->metadata = thumbnailSource->metadata;
+                                frame->descriptor = thumbnailSource->descriptor;
+                                frame->descriptor.size = image.size();
+                                frame->descriptor.layout = PixelLayout::Interleaved;
+                                frame->descriptor.channelOrder = ChannelOrder::RGBA;
+                                frame->descriptor.storageBits = image.format() == QImage::Format_RGBA32FPx4
+                                    ? 32 : image.depth() > 32 ? 16 : 8;
+                                frame->descriptor.sampleType = image.format() == QImage::Format_RGBA16FPx4 ||
+                                    image.format() == QImage::Format_RGBA32FPx4 ? SampleType::Float : SampleType::UInt;
+                                frame->rawParameters = thumbnailSource->rawParameters;
+                                frame->sourceSamplesPending = true;
+                                frame->storage = std::move(image);
+                                result.frame = std::move(frame);
+                            }
+                        } else result.error = QStringLiteral("Cancelled");
+                        thumbnailSource.reset(); // Do not pin the source through result delivery.
+                    } else if (request.metadataSource) {
+                        auto frame = std::make_shared<ImageFrame>(*request.metadataSource);
+                        MetadataReader::enrich(request.path, frame->metadata);
+                        result.frame = std::move(frame);
+                    } else { result = decoder->decode(request); }
+                    if (result.frame && request.purpose == DecodePurpose::Thumbnail &&
+                        activeConsumers->load(std::memory_order_relaxed) > 0) {
+                        if (const QImage* image = result.frame->qImage()) {
+                            const QSize sourceSize = result.frame->metadata.sourceSize.isValid()
+                                                         ? result.frame->metadata.sourceSize
+                                                         : result.frame->descriptor.size;
+                            const int validBits = result.frame->rawParameters
+                                                      ? result.frame->rawParameters->validBits()
+                                                      : result.frame->descriptor.validBits;
+                            const QImage cacheImage = *image;
+                            PixelStorageFootprint writingPixels; writingPixels.add(cacheImage);
+                            const auto writeOwnership = residentAccounting->retain(std::move(writingPixels));
+                            QMetaObject::invokeMethod(self, [self, diskCache, key, cacheImage,
+                                                             sourceSize, validBits, pendingWrites, writeOwnership] {
+                                if (!self || pendingWrites->load() >= 64) return;
+                                ++*pendingWrites;
+                                self->writePool_.start([diskCache, key, cacheImage, sourceSize,
+                                                        validBits, pendingWrites, writeOwnership] {
+                                    (void)diskCache->store(key, cacheImage, sourceSize, validBits);
+                                    --*pendingWrites;
+                                });
+                            }, Qt::QueuedConnection);
+                        }
+                    }
+                }
+                if (result.frame && !request.isCancelled() && request.purpose != DecodePurpose::Thumbnail &&
+                    !request.metadataSource && !request.requireDisplayImage) {
+                    auto prepared = std::make_shared<ImageFrame>(*result.frame);
+                    if (const auto* image = prepared->qImage(); image && image->format() == QImage::Format_RGBA64)
+                        prepared->uploadImage = image->convertedTo(QImage::Format_RGBA16FPx4);
+                    if (prepared->rawParameters && prepared->rawParameters->format == RawPixelFormat::P010 &&
+                        !prepared->rawParameters->littleEndian) {
+                        if (const auto* planes = std::get_if<std::shared_ptr<const PlaneBufferSet>>(&prepared->storage)) {
+                            auto normalized = std::make_shared<PlaneBufferSet>(**planes);
+                            normalized->displayImage = {};
+                            normalized->storage.detach();
+                            for (qsizetype i = 0; i + 1 < normalized->storage.size(); i += 2) {
+                                if ((i % (1024 * 1024)) == 0 && request.isCancelled()) break;
+                                std::swap(normalized->storage[i], normalized->storage[i + 1]);
+                            }
+                            prepared->uploadPlanes = std::move(normalized);
+                        }
+                    }
+                    result.frame = std::move(prepared);
+                }
+                decodeElapsedMs = qMax<qint64>(0, decodeTimer.elapsed() - workingWaitMs);
+                if (result.frame && !request.isCancelled()) {
+                    auto tracked = std::make_shared<ImageFrame>(*result.frame);
+                    PixelStorageFootprint footprint; tracked->appendPixelStorage(footprint);
+                    tracked->pixelOwnership.attach(residentAccounting, std::move(footprint));
+                    result.frame = std::move(tracked);
+                }
+                if (result.frame && !request.metadataSource) {
+                    resultReservation = resultBufferBudget->reserve(result.frame->byteSize(),
+                        [&request] { return request.isCancelled(); });
+                    if (!resultReservation) result = {{}, QStringLiteral("Cancelled")};
+                }
+            } catch (const std::bad_alloc&) {
+                result = {{}, QStringLiteral("Not enough memory to prepare image")};
+            } catch (const std::exception&) {
+                result = {{}, QStringLiteral("Image decoding failed")};
+            }
+            workingReservation.reset(); // Result credits now own the submission phase.
+            request.reserveWorkingMemory = {};
+            if (!self) return;
+            QMetaObject::invokeMethod(
+                self,
+                [self, completion = [self, resultReservation, result = std::move(result), key, keyPrefix, decoderIdentity, purpose = request.purpose,
+                 obsoletePreviewPrefixes, coveringPreviewPrefixes, coveringFullPrefix,
+                 sourcePath = request.path, generation, activeConsumers, diskHit, metadataOnly = bool(request.metadataSource),
+                 elapsedMs = decodeElapsedMs]() {
+                    if (!self) {
+                        return;
+                    }
+
+                    diagnostics::event(diagnostics::Level::Debug, diagnostics::decode(),
+                        QStringLiteral("loader.completed"),
+                        {{"file", diagnostics::fileId(sourcePath)}, {"generation", qint64(generation)},
+                         {"elapsedMs", elapsedMs}, {"diskHit", diskHit},
+                         {"succeeded", result.succeeded()}, {"error", result.error},
+                         {"cancelled", activeConsumers->load() <= 0},
+                         {"cachedBytes", qint64(self->cachedBytes())}}, isHeaderlessImage(sourcePath));
+                    const auto currentGeneration = self->inFlight_.constFind(key);
+                    if (currentGeneration == self->inFlight_.cend() || currentGeneration->generation != generation) return;
+                    if (result.frame && activeConsumers->load(std::memory_order_relaxed) > 0) {
+                        QString frameKey = key;
+                        if (result.frame->rawParameters &&
+                            self->adoptRawParameters(sourcePath, *result.frame->rawParameters)) {
+                            // Subsequent requests include the discovered defaults. Store once
+                            // under that identity, retaining the original file-version prefix.
+                            frameKey = keyPrefix + QLatin1Char('|') + result.frame->rawParameters->cacheKey() +
+                                QLatin1Char('|') + decoderIdentity;
+                        }
+                        if (!metadataOnly) {
+                            // Encoded previews are already served from a larger preview or
+                            // full frame in requestImpl(). Retaining every progressive size
+                            // wastes pixels without providing another cache hit. RAW keeps
+                            // its separate CPU fallback/source-plane representations.
+                            const bool compact = !result.frame->rawParameters &&
+                                result.frame->qImage() && purpose != DecodePurpose::Thumbnail;
+                            const QString suffix = frameKey.mid(keyPrefix.size());
+                            bool covered = false;
+                            if (compact && purpose == DecodePurpose::Preview) {
+                                covered = self->fullCache_.contains(coveringFullPrefix + suffix);
+                                for (const auto& prefix : coveringPreviewPrefixes)
+                                    covered = covered || self->previewCache_.contains(prefix + suffix);
+                            }
+                            if (!covered) self->cacheFor(purpose).put(frameKey, result.frame, result.frame->byteSize());
+                        }
+                        self->enforceMemoryBudget(purpose);
+                        // Only discard fallbacks after global budget enforcement: a
+                        // frame can fit its individual cache but exceed the total budget.
+                        if (!metadataOnly && !result.frame->rawParameters && result.frame->qImage() &&
+                            self->cacheFor(purpose).contains(frameKey)) {
+                            const QString suffix = frameKey.mid(keyPrefix.size());
+                            for (const auto& prefix : obsoletePreviewPrefixes)
+                                self->previewCache_.erase(prefix + suffix);
+                        }
+
+                        if (purpose == DecodePurpose::Thumbnail) {
+                            const QSize sourceSize = result.frame->metadata.sourceSize.isValid()
+                                                         ? result.frame->metadata.sourceSize
+                                                         : result.frame->descriptor.size;
+                            const int validBits = result.frame->rawParameters
+                                                      ? result.frame->rawParameters->validBits()
+                                                      : result.frame->descriptor.validBits;
+                            emit self->thumbnailMetadataReady(sourcePath, sourceSize, validBits);
+                        }
+                    }
+                    const auto current = self->inFlight_.constFind(key);
+                    if (current == self->inFlight_.cend() ||
+                        current->generation != generation) {
+                        return;
+                    }
+                    const InFlightRequest inFlight = self->inFlight_.take(key);
+                    for (const PendingRequest& request : inFlight.pending) {
+                        if (request.state->cancelled.load(std::memory_order_relaxed)) continue;
+                        request.callback(request.requestId, result);
+                        if (!self) {
+                            break;
+                        }
+                    }
+                }, serialized = !request.metadataSource && decoder->executionMode(request.path) == DecodeExecutionMode::Serialized]() mutable {
+                    if (!self) return;
+                    if (serialized) --self->serializedRunning_;
+                    else --self->parallelRunning_;
+                    self->completions_.push_back(std::move(completion));
+                    self->scheduleDispatch();
+                },
+                Qt::QueuedConnection);
+        };
+    scheduleDispatch();
+    return LoadHandle(state);
+}
+
+int ImageLoader::viewportPriority(const QString& path) const {
+    int priority = -1000;
+    for (const auto& viewport : viewports_)
+        priority = std::max(priority, viewport.priorities.value(path, -1000));
+    return priority;
+}
+
+void ImageLoader::updateViewport(const QString& owner, const QHash<QString, int>& priorities,
+                                 bool fast) {
+    if (priorities.isEmpty()) { viewports_.remove(owner); ownerService_.remove(owner); }
+    else viewports_.insert(owner, {priorities, fast});
+    if (fast) {
+        for (const auto& handle : imagePrefetchHandles_) handle.cancel();
+        for (const auto& handle : rawPrefetchHandles_) handle.cancel();
+    }
+    for (auto it = inFlight_.begin(); it != inFlight_.end(); ++it) {
+        if (it->purpose == DecodePurpose::Thumbnail) {
+            it->viewportPriorityKnown = true;
+            refreshThumbnailPriority(*it);
+        }
+    }
+    decodeWorkingBudget_->wakeWaiters();
+    scheduleDispatch();
+}
+
+bool ImageLoader::refreshThumbnailPriority(InFlightRequest& request) {
+    const int demand = viewportPriority(request.path);
+    int priority = -1000;
+    for (const auto& consumer : request.pending) {
+        if (consumer.state->cancelled.load(std::memory_order_relaxed)) continue;
+        priority = std::max(priority, consumer.viewportManaged && request.viewportPriorityKnown
+            ? demand : consumer.initialPriority);
+    }
+    if (priority == request.priority) return false;
+    request.priority = priority;
+    if (request.workingPriority) request.workingPriority->store(priority);
+    return true;
+}
+
+bool ImageLoader::fastScrolling() const {
+    for (const auto& viewport : viewports_) if (viewport.fast) return true;
+    return false;
+}
+
+bool ImageLoader::hasInteractiveWork() const {
+    for (const auto& job : inFlight_)
+        if (job.priority >= 60 && job.activeConsumers->load() > 0) return true;
+    return false;
+}
+
+void ImageLoader::scheduleDispatch() {
+    if (!dispatchTimer_.isActive()) dispatchTimer_.start();
+    // New demand preempts a pending completion deadline without waiting a frame.
+    if (!dispatchWake_.isActive() || dispatchWake_.remainingTime() > 0) dispatchWake_.start(0);
+}
+
+void ImageLoader::dispatch() {
+    const QPointer<ImageLoader> alive(this);
+    const bool commitNow = !completionClock_.isValid() || completionClock_.elapsed() >= 16;
+    if (commitNow && !completions_.empty()) completionClock_.start();
+    QElapsedTimer completionBudget; completionBudget.start();
+    while (commitNow && !completions_.empty() && completionBudget.elapsed() < 4) {
+        auto completion = std::move(completions_.front()); completions_.pop_front();
+        completion();
+        if (!alive) return;
+    }
+    // Keep QThreadPool's own queue empty: queued jobs remain mutable and cancellable here.
+    const bool resourcePressure = residentResourceBytes() > memoryBudget_ * 3 / 4;
+    if (resourcePressure) {
+        for (const auto& handle : imagePrefetchHandles_) handle.cancel();
+        for (const auto& handle : rawPrefetchHandles_) handle.cancel();
+    }
+    for (auto it = inFlight_.begin(); it != inFlight_.end();) {
+        if (it->purpose == DecodePurpose::Thumbnail && refreshThumbnailPriority(*it))
+            decodeWorkingBudget_->wakeWaiters();
+        if (!it->running && it->activeConsumers->load() <= 0) it = inFlight_.erase(it);
+        else ++it;
+    }
+    for (;;) {
+        // Reserve a result slot before starting work. A fast decoder must not grow
+        // pixel buffers without bound while GUI completion commits are time-sliced.
+        constexpr qsizetype resultCapacity = 64;
+        if (qsizetype(completions_.size()) + parallelRunning_ + serializedRunning_ >= resultCapacity) break;
+        auto best = inFlight_.end();
+        auto ownerFor = [this](const QString& path) {
+            QString owner;
+            for (auto viewport = viewports_.cbegin(); viewport != viewports_.cend(); ++viewport)
+                if (viewport->priorities.contains(path) &&
+                    (owner.isEmpty() || ownerService_.value(viewport.key()) < ownerService_.value(owner)))
+                    owner = viewport.key();
+            return owner;
+        };
+        for (auto it = inFlight_.begin(); it != inFlight_.end(); ++it) {
+            if (it->purpose == DecodePurpose::Thumbnail && it->priority <= -1000) continue;
+            if (it->running || !it->work || it->activeConsumers->load() <= 0) continue;
+            if (it->serialized ? serializedRunning_ >= 1
+                               : parallelRunning_ >= pool_.maxThreadCount()) continue;
+            if (fastScrolling() && it->priority < 60) continue;
+            if (resourcePressure && it->purpose == DecodePurpose::Thumbnail && it->priority < 60) continue;
+            // Visible thumbnail workers can also wait for byte credits. Keep one
+            // existing channel available for the current image/exact inspection,
+            // so budget waiters cannot occupy the entire ordinary pool.
+            if (!it->serialized && it->priority < 100 &&
+                parallelRunning_ >= pool_.maxThreadCount() - 1) continue;
+            const int category = it->priority >= 100 ? 3 : it->priority >= 60 ? 2 : it->priority >= 20 ? 1 : 0;
+            const int bestCategory = best == inFlight_.end() ? -1 :
+                best->priority >= 100 ? 3 : best->priority >= 60 ? 2 : best->priority >= 20 ? 1 : 0;
+            const quint64 served = ownerService_.value(ownerFor(it->path));
+            const quint64 bestServed = best == inFlight_.end() ? 0 : ownerService_.value(ownerFor(best->path));
+            if (category > bestCategory || (category == bestCategory &&
+                (served < bestServed || (served == bestServed &&
+                 (it->priority > best->priority || (it->priority == best->priority && it->generation < best->generation)))))) best = it;
+        }
+        if (best == inFlight_.end()) break;
+        ownerService_[ownerFor(best->path)] = ++serviceSequence_;
+        best->running = true;
+
+        diagnostics::event(diagnostics::Level::Debug, diagnostics::decode(),
+            QStringLiteral("loader.dispatched"),
+            {{"file", diagnostics::fileId(best->path)}, {"generation", qint64(best->generation)},
+             {"queueMs", best->queuedAt.elapsed()}, {"priority", best->priority},
+             {"pending", inFlight_.size()}}, isHeaderlessImage(best->path));
+        if (best->serialized) { ++serializedRunning_; serializedPool_.start(std::move(best->work)); }
+        else { ++parallelRunning_; pool_.start(std::move(best->work)); }
+    }
+    if (!completions_.empty() && !dispatchWake_.isActive())
+        dispatchWake_.start(std::max(1, 16 - int(completionClock_.elapsed())));
+    if (inFlight_.isEmpty() && completions_.empty()) dispatchTimer_.stop();
+}
+
+void ImageLoader::prefetchAdjacentImages(const QStringList& paths, int index, const QSize& size) {
+    for (const auto& handle : imagePrefetchHandles_) handle.cancel();
+    imagePrefetchHandles_.clear();
+    if (fastScrolling() || hasInteractiveWork() || residentResourceBytes() > memoryBudget_ * 3 / 4) return;
+    for (const int delta : {1, -1}) {
+        if (index + delta < 0 || index + delta >= paths.size()) continue;
+        imagePrefetchHandles_.append(request(0, {paths.at(index + delta), DecodePurpose::Preview, size},
+            [](quint64, const DecodeResult&) {}, RequestOptions{LoadCategory::NearViewport, delta > 0 ? 5 : 0,
+                                                                            QStringLiteral("image-prefetch")}));
+    }
+}
+
+void ImageLoader::prefetchAdjacentRawFrames(const QString& path, const RawImageParameters& current,
+                                            const QSize& previewSize) {
+    for (const auto& handle : rawPrefetchHandles_) handle.cancel();
+    rawPrefetchHandles_.clear();
+    if (fastScrolling() || hasInteractiveWork() || residentResourceBytes() > memoryBudget_ * 3 / 4) return;
+    const auto snapshot = fileSnapshots_.constFind(path);
+    if (snapshot == fileSnapshots_.cend() || !snapshot->browsable) return;
+    const int frameCount = availableFrameCount(snapshot->size, current);
+    const int adjacentCount =
+        (current.frameIndex > 0 ? 1 : 0) + (current.frameIndex + 1 < frameCount ? 1 : 0);
+    const qsizetype estimatedFrameCost = estimatedFullFrameBytes(current);
+    // Full frames have their own budget. Prefetch only when current and adjacent frames can
+    // coexist without displacing the active frame immediately.
+    const qsizetype fullPrefetchBudget = std::min(fullCache_.maximumCost(), memoryBudget_);
+    const bool prefetchFull = adjacentCount > 0 && estimatedFrameCost > 0 &&
+                              estimatedFrameCost <= fullPrefetchBudget / (adjacentCount + 1);
+    for (const int delta : {-1, 1}) {
+        RawImageParameters adjacent = current;
+        adjacent.frameIndex += delta;
+        if (adjacent.frameIndex < 0 || adjacent.frameIndex >= frameCount) {
+            continue;
+        }
+        rawPrefetchHandles_.append(request(
+            0, {path, DecodePurpose::Preview, previewSize, adjacent},
+            [](quint64, const DecodeResult&) {},
+            RequestOptions{LoadCategory::NearViewport, 0, QStringLiteral("raw-prefetch")}));
+        if (prefetchFull) {
+            rawPrefetchHandles_.append(request(
+                0, {path, DecodePurpose::Full, {}, adjacent}, [](quint64, const DecodeResult&) {},
+                RequestOptions{LoadCategory::Background, 0,
+                               QStringLiteral("raw-full-prefetch")}));
+        }
+    }
+}
+
+QString ImageLoader::displayRevision() const {
+    Q_ASSERT(thread() == QThread::currentThread());
+    if (displayRevision_.isEmpty()) displayRevision_ = computeDisplayRevision(*decoder_);
+    return displayRevision_;
+}
+
+void ImageLoader::clearCache() {
+    sourceCache_->clear();
+    thumbnailCache_.clear();
+    clearTransientCaches();
+    const auto revision = computeDisplayRevision(*decoder_);
+    if (revision != displayRevision_) {
+        displayRevision_ = revision;
+        emit displayRevisionChanged();
+    }
+}
+
+void ImageLoader::clearTransientCaches() {
+    Q_ASSERT(thread() == QThread::currentThread());
+    previewCache_.clear();
+    fullCache_.clear();
+}
+
+void ImageLoader::setRawParameters(const QString& path, const RawImageParameters& parameters) {
+    const QString normalized = QFileInfo(path).absoluteFilePath();
+    {
+        QWriteLocker lock(&rawParametersLock_);
+        const auto existing = rawParameters_.constFind(normalized);
+        if (existing != rawParameters_.cend() &&
+            existing->cacheKey() == parameters.cacheKey()) {
+            return;
+        }
+        rawParameters_.insert(normalized, parameters);
+        rawParameterRevisions_.insert(normalized, parameters.cacheKey());
+    }
+    emit rawParametersChanged(normalized);
+}
+
+bool ImageLoader::adoptRawParameters(const QString& path, const RawImageParameters& parameters) {
+    const QString normalized = QFileInfo(path).absoluteFilePath();
+    const QWriteLocker lock(&rawParametersLock_);
+    if (rawParameters_.contains(normalized)) return false;
+    rawParameters_.insert(normalized, parameters);
+    return true;
+}
+
+QString ImageLoader::rawParametersRevision(const QString& path) const {
+    const QReadLocker lock(&rawParametersLock_);
+    return rawParameterRevisions_.value(QFileInfo(path).absoluteFilePath());
+}
+
+std::optional<RawImageParameters> ImageLoader::rawParameters(const QString& path) const {
+    const QReadLocker lock(&rawParametersLock_);
+    const auto found = rawParameters_.constFind(QFileInfo(path).absoluteFilePath());
+    return found == rawParameters_.cend() ? std::nullopt
+                                          : std::optional<RawImageParameters>(*found);
+}
+
+bool ImageLoader::isCached(DecodeRequest request) const {
+    Q_ASSERT(thread() == QThread::currentThread());
+    const auto snapshot = fileSnapshots_.constFind(request.path);
+    if (snapshot == fileSnapshots_.cend() || !snapshot->browsable) return false;
+    const auto keyFor = [&](const DecodeRequest& candidate) {
+        return cacheKeyPrefix(candidate, snapshot->absolutePath, snapshot->size, snapshot->modifiedMs) +
+            QLatin1Char('|') + (candidate.rawParameters ? candidate.rawParameters->cacheKey() : QStringLiteral("encoded")) +
+            QLatin1Char('|') + decoder_->cacheIdentity();
+    };
+    if (!request.rawParameters) request.rawParameters = rawParameters(request.path);
+    if (!request.rawParameters && decoder_->executionMode(request.path) == DecodeExecutionMode::Parallel)
+        request.requireDisplayImage = false;
+    if (request.purpose == DecodePurpose::Preview) {
+        DecodeRequest candidate = request;
+        candidate.purpose = DecodePurpose::Full;
+        candidate.maximumSize = {};
+        if (fullCache_.contains(keyFor(candidate))) return true;
+        const int edge = std::max(request.maximumSize.width(), request.maximumSize.height());
+        for (const int bucket : {512, 1024, 1536, 2048, 2560}) {
+            if (bucket < edge) continue;
+            candidate = request;
+            candidate.maximumSize = QSize(bucket, bucket);
+            if (previewCache_.contains(keyFor(candidate))) return true;
+        }
+    }
+    return cacheFor(request.purpose).contains(keyFor(request));
+}
+
+qsizetype ImageLoader::cachedBytes() const {
+    Q_ASSERT(thread() == QThread::currentThread());
+    return cacheAccounting_->bytes();
+}
+
+qsizetype ImageLoader::residentPixelBytes() const {
+    return residentAccounting_->bytes();
+}
+
+qsizetype ImageLoader::nominalGpuPixelBytes() const {
+    return residentAccounting_->gpuResources()->bytes();
+}
+
+qsizetype ImageLoader::residentResourceBytes() const {
+    const auto cpu = residentPixelBytes(), gpu = nominalGpuPixelBytes();
+    return gpu > std::numeric_limits<qsizetype>::max() - cpu
+        ? std::numeric_limits<qsizetype>::max() : cpu + gpu;
+}
+
+PixelMemoryOwnership ImageLoader::accountImagePixels(const QImage& image) const {
+    PixelStorageFootprint footprint; footprint.add(image);
+    PixelMemoryOwnership ownership;
+    ownership.attach(residentAccounting_, std::move(footprint));
+    return ownership;
+}
+
+void ImageLoader::setMemoryBudget(qsizetype bytes) {
+    Q_ASSERT(thread() == QThread::currentThread());
+    memoryBudget_ = std::max<qsizetype>(bytes, 1);
+    // Resident caches, in-progress decodes and queued results all consume memory.
+    // The per-worker admission limits must follow a reduced loader budget too.
+    decodeWorkingBudget_->setMaximumBytes(memoryBudget_ / 2);
+    resultBufferBudget_->setMaximumBytes(memoryBudget_ / 4);
+    sourceCache_->setBudget(std::min<qsizetype>(96LL * 1024 * 1024, memoryBudget_ / 4));
+    automaticFullLoadBudget_ =
+        std::min<qsizetype>(256LL * 1024LL * 1024LL, memoryBudget_);
+    enforceMemoryBudget(DecodePurpose::Full);
+}
+
+qsizetype ImageLoader::estimatedFullFrameCost(const ImageFrame& preview) {
+    const QSize sourceSize = preview.rawParameters ? preview.rawParameters->size
+                             : preview.metadata.sourceSize.isValid()
+                                 ? preview.metadata.sourceSize
+                                 : preview.descriptor.size;
+    if (sourceSize.isEmpty()) {
+        return 0;
+    }
+    // RGBA64 retains native samples plus its prepared half-float upload buffer.
+    qsizetype bytesPerPixel = preview.descriptor.storageBits > 8 ? 16 : 4;
+    if (const auto* image = preview.qImage()) {
+        switch (image->format()) {
+        case QImage::Format_RGBA64: case QImage::Format_RGBX64: bytesPerPixel = 16; break;
+        case QImage::Format_RGBA32FPx4: case QImage::Format_RGBX32FPx4: bytesPerPixel = 16; break;
+        case QImage::Format_RGBA16FPx4: case QImage::Format_RGBX16FPx4: bytesPerPixel = 8; break;
+        default: bytesPerPixel = 4; break;
+        }
+    } else if (preview.rawParameters) bytesPerPixel = 4;
+    const qint64 pixels = static_cast<qint64>(sourceSize.width()) * sourceSize.height();
+    if (pixels <= 0 || pixels > std::numeric_limits<qsizetype>::max() / bytesPerPixel) {
+        return std::numeric_limits<qsizetype>::max();
+    }
+    qsizetype cost = static_cast<qsizetype>(pixels) * bytesPerPixel;
+    if (preview.rawParameters) {
+        const auto source = frameByteSize(*preview.rawParameters);
+        if (source <= 0 || source > std::numeric_limits<qsizetype>::max() - cost)
+            return std::numeric_limits<qsizetype>::max();
+        cost += source;
+        // Big-endian P010 retains a separate normalized upload plane allocation.
+        if (preview.rawParameters->format == RawPixelFormat::P010 && !preview.rawParameters->littleEndian) {
+            if (source > std::numeric_limits<qsizetype>::max() - cost)
+                return std::numeric_limits<qsizetype>::max();
+            cost += source;
+        }
+    }
+    return cost;
+}
+
+qsizetype ImageLoader::estimatedFullTextureCost(const ImageFrame& preview) {
+    const QSize size = preview.rawParameters ? preview.rawParameters->size
+                       : preview.metadata.sourceSize.isValid() ? preview.metadata.sourceSize : preview.descriptor.size;
+    int bytesPerPixel = preview.descriptor.storageBits > 8 ? 8 : 4;
+    if (preview.descriptor.sampleType == SampleType::Float && preview.descriptor.storageBits > 16)
+        bytesPerPixel = 16;
+    if (const auto* image = preview.qImage()) {
+        switch (image->format()) {
+        case QImage::Format_RGBA64: case QImage::Format_RGBX64:
+        case QImage::Format_RGBA16FPx4: case QImage::Format_RGBX16FPx4: bytesPerPixel = 8; break;
+        case QImage::Format_RGBA32FPx4: case QImage::Format_RGBX32FPx4: bytesPerPixel = 16; break;
+        default: bytesPerPixel = 4; break;
+        }
+    } else if (preview.rawParameters) bytesPerPixel = 4;
+    auto cost = nominalGpuBytes(size, bytesPerPixel);
+    if (preview.rawParameters) cost = std::max(cost, frameByteSize(*preview.rawParameters));
+    constexpr qsizetype dummyTextures = 64;
+    return cost > std::numeric_limits<qsizetype>::max() - dummyTextures
+        ? std::numeric_limits<qsizetype>::max() : cost + dummyTextures;
+}
+
+bool ImageLoader::canAutomaticallyLoadFull(
+    const QVector<ImageFramePtr>& previewFrames) const {
+    const auto resident = residentResourceBytes();
+    if (previewFrames.isEmpty() || fastScrolling() || hasInteractiveWork() || resident > memoryBudget_) return false;
+    qsizetype total = 0, prospective = resident;
+    for (const ImageFramePtr& frame : previewFrames) {
+        if (!frame) {
+            return false;
+        }
+        const qsizetype cost = estimatedFullFrameCost(*frame);
+        if (cost <= 0 || cost > automaticFullLoadBudget_ - total) {
+            return false;
+        }
+        total += cost;
+        const auto gpu = estimatedFullTextureCost(*frame);
+        // Preserve old preview pixels/textures until the new upload is complete.
+        if (cost > memoryBudget_ - prospective || gpu > memoryBudget_ - prospective - cost) {
+
+            return false;
+        }
+        prospective += cost + gpu;
+    }
+    return total <= automaticFullLoadBudget_;
+}
+
+void ImageLoader::enforceMemoryBudget(DecodePurpose insertedPurpose) {
+    constexpr qsizetype thumbnailReserve = 64LL * 1024 * 1024;
+    constexpr qsizetype previewReserve = 64LL * 1024 * 1024;
+    auto evictOne = [](WeightedLruCache<ImageFrame>& cache) {
+        return cache.evictLeastRecentlyUsed() > 0;
+    };
+    while (cachedBytes() > memoryBudget_) {
+        bool evicted = false;
+        if (fullCache_.cost() > 0 &&
+            (insertedPurpose != DecodePurpose::Full ||
+             fullCache_.cost() > memoryBudget_ / 2)) {
+            evicted = evictOne(fullCache_);
+        }
+        if (!evicted && previewCache_.cost() > previewReserve) {
+            evicted = evictOne(previewCache_);
+        }
+        if (!evicted && thumbnailCache_.cost() > thumbnailReserve) {
+            evicted = evictOne(thumbnailCache_);
+        }
+        if (!evicted && fullCache_.cost() > 0) {
+            evicted = evictOne(fullCache_);
+        }
+        if (!evicted && previewCache_.cost() > 0) {
+            evicted = evictOne(previewCache_);
+        }
+        if (!evicted && thumbnailCache_.cost() > 0) {
+            evicted = evictOne(thumbnailCache_);
+        }
+        if (!evicted) {
+            break;
+        }
+    }
+}
+
+void ImageLoader::retireCacheOwner(std::shared_ptr<const void> owner, qsizetype cost) {
+    // Small allocations are inexpensive; source-cache trims already on a worker
+    // must not enqueue themselves back onto the writer.
+    if (QThread::currentThread() != thread() || cost < 1024 * 1024) return;
+    constexpr qsizetype maximumBytes = kDefaultMemoryBudget;
+    const auto state = cacheRetirement_;
+    auto bytes = state->bytes.load();
+    if (state->owners.load() >= 64 || cost > maximumBytes - bytes) {
+
+        return; // Preserve the bound; release synchronously under saturation.
+    }
+    // Only the GUI admits owners; workers only subtract counters.
+    state->bytes.fetch_add(cost);
+    ++state->owners;
+
+    writePool_.start([owner = std::move(owner), state, cost]() mutable {
+        owner.reset();
+        state->bytes.fetch_sub(cost);
+        --state->owners;
+
+    },100);
+}
+
+void ImageLoader::reclaimInactiveResources() {
+    if (retirementPending_->load() || residentResourceBytes() <= memoryBudget_) return;
+    for (const auto& handle : imagePrefetchHandles_) handle.cancel();
+    for (const auto& handle : rawPrefetchHandles_) handle.cancel();
+    const auto deficit = residentResourceBytes() - memoryBudget_;
+    QVector<std::shared_ptr<const void>> retired;
+    qsizetype retiredCost = 0;
+    QElapsedTimer timer;timer.start();
+    const auto collect = [&](auto result) {
+        retiredCost += result.cost;
+        for (auto& owner : result.retired) retired.append(std::move(owner));
+    };
+    for (auto* cache : {&fullCache_, &previewCache_, &thumbnailCache_}) {
+        if (timer.elapsed() >= 4 || retiredCost >= deficit) break;
+        collect(cache->pruneUnused(32,deficit-retiredCost));
+    }
+    if (timer.elapsed() < 4 && retiredCost < deficit)
+        collect(sourceCache_->pruneUnused(32,deficit-retiredCost));
+    if (retired.isEmpty()) return;
+
+    retirementPending_->store(true);
+    const auto pending = retirementPending_;
+    // Reuse the bounded single writer. One retirement batch may queue, ahead of
+    // pending compression tasks, without expanding ordinary decode concurrency.
+    writePool_.start([owners = std::move(retired), pending]() mutable {
+        owners.clear();
+
+        pending->store(false);
+    },100);
+}
+
+WeightedLruCache<ImageFrame>& ImageLoader::cacheFor(DecodePurpose purpose) {
+    switch (purpose) {
+    case DecodePurpose::Thumbnail: return thumbnailCache_;
+    case DecodePurpose::Preview: return previewCache_;
+    case DecodePurpose::Full: return fullCache_;
+    }
+    return previewCache_;
+}
+
+const WeightedLruCache<ImageFrame>& ImageLoader::cacheFor(DecodePurpose purpose) const {
+    switch (purpose) {
+    case DecodePurpose::Thumbnail: return thumbnailCache_;
+    case DecodePurpose::Preview: return previewCache_;
+    case DecodePurpose::Full: return fullCache_;
+    }
+    return previewCache_;
+}
+
+QString ImageLoader::cacheKey(const DecodeRequest& request, const QString& decoderIdentity) {
+    const QFileInfo info(request.path);
+    return cacheKeyPrefix(request, info.absoluteFilePath(), info.size(), info.lastModified().toMSecsSinceEpoch()) + QLatin1Char('|') +
+        (request.rawParameters ? request.rawParameters->cacheKey() : QStringLiteral("encoded")) +
+        QLatin1Char('|') + decoderIdentity;
+}
+
+} // namespace mvpview

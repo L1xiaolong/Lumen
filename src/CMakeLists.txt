@@ -1,0 +1,7 @@
+add_subdirectory(diagnostics)
+add_subdirectory(core)
+add_subdirectory(io)
+add_subdirectory(render)
+add_subdirectory(platform)
+add_subdirectory(browser)
+add_subdirectory(qml)

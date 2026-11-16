@@ -1,0 +1,147 @@
+#pragma once
+
+#include "core/image_types.h"
+#include "core/sync_group.h"
+#include "core/view_state.h"
+
+#include <QQuickRhiItem>
+#include <QTimer>
+#include <QVariantMap>
+#include <QtQml/qqml.h>
+
+namespace mvpview {
+
+// A single scene-graph item renders the complete 2-4 image comparison. Qt 6.9
+// does not reliably composite several sibling QQuickRhiItems on Metal, while a
+// single item also avoids duplicating offscreen color buffers and preserves the
+// full-resolution GPU RAW/YUV/Bayer path used by ImageCanvas.
+class QmlImageCanvas : public QQuickRhiItem {
+    Q_OBJECT
+    QML_NAMED_ELEMENT(ImageCanvas)
+    Q_PROPERTY(int presentationMode READ presentationMode WRITE setPresentationMode NOTIFY
+                   presentationModeChanged)
+    Q_PROPERTY(
+        qreal compareAmount READ compareAmount WRITE setCompareAmount NOTIFY compareAmountChanged)
+    Q_PROPERTY(qreal dividerPosition READ dividerPosition NOTIFY dividerPositionChanged)
+    Q_PROPERTY(
+        bool viewSynchronized READ synchronized WRITE setSynchronized NOTIFY synchronizedChanged)
+    Q_PROPERTY(int imageCount READ imageCount NOTIFY imageCountChanged)
+    Q_PROPERTY(int navigationRevision READ navigationRevision NOTIFY navigationRevisionChanged)
+    Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor NOTIFY
+                   backgroundColorChanged)
+    Q_PROPERTY(
+        bool smoothDisplay READ smoothDisplay WRITE setSmoothDisplay NOTIFY smoothDisplayChanged)
+
+  public:
+    explicit QmlImageCanvas(QQuickItem* parent = nullptr);
+    ~QmlImageCanvas() override;
+
+    int presentationMode() const { return presentationMode_; }
+    qreal compareAmount() const { return compareAmount_; }
+    qreal dividerPosition() const;
+    bool synchronized() const { return synchronized_; }
+    int imageCount() const { return static_cast<int>(frames_.size()); }
+    int navigationRevision() const { return navigationRevision_; }
+    QColor backgroundColor() const { return backgroundColor_; }
+    bool smoothDisplay() const { return smoothDisplay_; }
+    const QVector<ImageFramePtr>& frames() const { return frames_; }
+
+    void setPresentationMode(int mode);
+    void setCompareAmount(qreal amount);
+    void setSynchronized(bool enabled);
+    void setBackgroundColor(const QColor& color);
+    void setSmoothDisplay(bool enabled);
+    void setFrames(const QVector<ImageFramePtr>& frames, int changedSlot = -1,
+                   bool resetChangedView = false);
+
+    // Compatibility helpers used by the comparison controller while a
+    // temporary B-over-A frame is active.
+    void setFrameAt(int slot, ImageFramePtr frame, bool resetView = false);
+    ImageFramePtr frameAt(int slot) const;
+    QSize logicalImageSize(int slot) const;
+    ViewState effectiveViewState(int slot) const;
+
+    Q_INVOKABLE void fitAll();
+    Q_INVOKABLE void actualPixelsAll();
+    Q_INVOKABLE QVariantMap navigationState(int slot) const;
+    // QML HoverHandler bridge used by the fullscreen canvas. Native hover delivery can become
+    // stale after an in-place platform-window transition, so the position is only published while
+    // it still matches the live cursor.
+    Q_INVOKABLE void probePixelAt(const QPointF& position);
+    Q_INVOKABLE void clearPixelProbe();
+
+  signals:
+    // Delivered on the GUI thread after rendering the current image at the current size.
+    void imageFrameRendered();
+    void presentationModeChanged();
+    void compareAmountChanged();
+    void dividerPositionChanged();
+    void synchronizedChanged();
+    void imageCountChanged();
+    void navigationRevisionChanged();
+    void backgroundColorChanged();
+    void smoothDisplayChanged();
+    void viewStateChanged(int slot, const mvpview::ViewState& state);
+    void pixelHovered(int sourceSlot, const QPoint& pixel, const QString& valueText, bool valid);
+    // Emitted when a probe needs source samples that only a full decode provides.
+    void pixelProbeFullResolutionRequested(int sourceSlot);
+    void slotActivated(int slot);
+    void contextMenuRequested(const QPointF& position);
+
+  protected:
+    QQuickRhiItemRenderer* createRenderer() override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void hoverMoveEvent(QHoverEvent* event) override;
+    void hoverLeaveEvent(QHoverEvent* event) override;
+
+  private:
+    QVector<ImageFramePtr> frames_;
+    QVector<ViewState> viewStates_;
+    // Frame that already reported a missing full decode per slot, so hovering keeps working
+    // without repeating the request.
+    QVector<const ImageFrame*> probeFullResolutionRequested_;
+    SyncGroup syncGroup_;
+    int presentationMode_ = 0;
+    qreal compareAmount_ = 0.5;
+    bool synchronized_ = true;
+    bool dragging_ = false;
+    bool dividerDragging_ = false;
+    int activeSlot_ = -1;
+    QPointF lastMousePosition_;
+    int navigationRevision_ = 0;
+    QColor backgroundColor_{160, 160, 160};
+    bool smoothDisplay_ = true;
+    QTimer hoverProbeTimer_;
+    QPointer<QWindow> hoverWindow_;
+    // Scene coordinates of the last probed cursor position. Events are published by the window,
+    // the item, and the cursor poll, so an exact match suppresses the duplicate reports while a
+    // real move always refreshes the probe.
+    QPointF lastHoverScenePosition_;
+    int lastHoverNavigationRevision_ = -1;
+    bool hasLastHoverScenePosition_ = false;
+    bool cursorInside_ = false;
+
+    QRectF cellRect(int slot) const;
+    int slotAt(const QPointF& position) const;
+    QPointF normalizedPoint(int slot, const QPointF& position) const;
+    void setViewState(int slot, const ViewState& state, bool notify = true,
+                      bool synchronizeViews = true);
+    void notifyNavigationChanged();
+    void handleItemGeometryChanged();
+    void attachHoverWindow(QWindow* window);
+    void updateHoverPolling();
+    void probeHoverScenePosition(const QPointF& scenePosition, bool force = false);
+    // Hover positions published by the platform can be stale after the in-place full-display
+    // transition. They are only published while they still agree with the live cursor position.
+    void probePlatformHoverPosition(const QPointF& scenePosition);
+    [[nodiscard]] QPointF liveCursorScenePosition() const;
+    [[nodiscard]] bool liveCursorIsInside() const;
+    void emitPixelAt(const QPointF& position);
+    void pollCursorForPixelProbe();
+};
+
+} // namespace mvpview

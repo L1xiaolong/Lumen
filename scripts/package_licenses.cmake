@@ -1,0 +1,32 @@
+# Copy project and icon notices into the directory distributed to users.
+# Other bundled runtime dependencies require their own license inventory.
+cmake_minimum_required(VERSION 3.25)
+
+if(NOT DEFINED NOTICE_DESTINATION OR NOTICE_DESTINATION STREQUAL "")
+    message(FATAL_ERROR "NOTICE_DESTINATION must specify the package notice directory")
+endif()
+
+get_filename_component(_source_root "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+file(MAKE_DIRECTORY "${NOTICE_DESTINATION}/licenses")
+foreach(_notice IN ITEMS LICENSE THIRD_PARTY_NOTICES.md)
+    if(NOT EXISTS "${_source_root}/${_notice}")
+        message(FATAL_ERROR "Missing distribution notice: ${_notice}")
+    endif()
+    configure_file("${_source_root}/${_notice}" "${NOTICE_DESTINATION}/${_notice}" COPYONLY)
+endforeach()
+
+configure_file("${_source_root}/third_party/miniz/LICENSE" "${NOTICE_DESTINATION}/licenses/miniz-LICENSE" COPYONLY)
+if(CMAKE_HOST_APPLE AND MVPVIEW_INCLUDE_CRASHPAD_LICENSES)
+    if(MVPVIEW_CRASHPAD_ROOT)
+        set(_crashpad "${MVPVIEW_CRASHPAD_ROOT}")
+    else()
+        set(_crashpad "${_source_root}/build/crashpad/crashpad")
+    endif()
+    foreach(_entry IN ITEMS LICENSE third_party/mini_chromium/mini_chromium/LICENSE third_party/zlib/zlib/LICENSE)
+        if(NOT EXISTS "${_crashpad}/${_entry}")
+            message(FATAL_ERROR "Missing Crashpad license: ${_entry}")
+        endif()
+        string(REPLACE "/" "-" _license_name "${_entry}")
+        configure_file("${_crashpad}/${_entry}" "${NOTICE_DESTINATION}/licenses/crashpad-${_license_name}" COPYONLY)
+    endforeach()
+endif()

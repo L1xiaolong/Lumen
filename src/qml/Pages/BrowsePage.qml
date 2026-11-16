@@ -1,0 +1,1889 @@
+pragma ComponentBehavior: Bound
+// qmllint disable unqualified
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Dialogs as PlatformDialogs
+import "../Mvp"
+
+Rectangle {
+    id: root
+    objectName: "browsePage"
+    color: Theme.sensorWhite
+    property var controller: null
+    property var workspaceController: controller
+    property var propertiesController: null
+    property var rawController: null
+    property var settingsController: null
+    property bool smoothDisplay: (!settingsController ||
+                                  settingsController.smoothDisplay === undefined)
+                                 ? true : settingsController.smoothDisplay
+    property string inspectorMode: ""
+    readonly property bool propertiesVisible: inspectorMode === "properties"
+    readonly property bool rawParametersVisible: inspectorMode === "raw"
+    readonly property bool inspectorVisible: inspectorMode.length > 0
+    property real inspectorWidth: 360
+    readonly property real inspectorMaximumWidth: Math.min(480, Math.max(320,
+        width - 418 - (navigatorVisible ? 200 : 0)))
+    readonly property real effectiveInspectorWidth: inspectorVisible
+        ? Math.min(inspectorWidth, inspectorMaximumWidth) : 0
+    function showProperties() {
+        rawParametersPanel.finishEditing()
+        inspectorMode = "properties"
+        propertiesPanel.synchronize()
+    }
+    function showRawParameters() {
+        inspectorMode = "raw"
+        rawParametersPanel.synchronize()
+    }
+    function closeInspector() {
+        rawParametersPanel.finishEditing()
+        inspectorMode = ""
+        const pane = paneLayoutLoader.item
+        if (pane) pane.forceActiveFocus()
+        else root.forceActiveFocus()
+    }
+    function closeProperties() { closeInspector() }
+    property bool navigatorVisible: true
+    property real navigatorWidth: Theme.sidebarWidth
+    property real galleryStripWidth: 280
+    property int displayMode: controller ? controller.displayMode : 0
+    property string iconPrefix: Theme.iconPrefix
+    property real titleBarHeight: Theme.toolbarHeight
+    property real captionButtonsWidth: 0
+    readonly property rect titleBarLeftControls: toolbar.leftControlsBounds
+    readonly property rect titleBarRightControls: toolbar.rightControlsBounds
+    readonly property var sortLabels: [qsTr("Name"), qsTr("Modified"),
+                                       qsTr("Size"), qsTr("Type")]
+    signal fullScreenRequested(var paths, int initialIndex)
+    signal settingsRequested()
+    // Use visible, not opened: block input throughout popup enter/exit transitions.
+    property bool externalModalVisible: false
+    readonly property bool contentInteractionEnabled: root.visible && !externalModalVisible &&
+                                                       !rawParametersPanel.blockingPopupVisible &&
+                                                       !imageResizeDialog.visible &&
+                                                       !newFolderDialog.visible &&
+                                                       !renameDialog.visible &&
+                                                       !trashDialog.visible &&
+                                                       !transferDialog.visible &&
+                                                       !directoryErrorDialog.visible &&
+                                                       !folderPicker.visible
+    readonly property bool fileShortcutsEnabled: (workspaceController.hasActivePane === undefined ||
+                                                  workspaceController.hasActivePane) &&
+                                                  !shortcutContext.textInputFocused &&
+                                                  !propertiesPanel.textSelectionActive &&
+                                                  !(root.rawParametersVisible && rawParametersPanel.inputFocused) &&
+                                                  root.contentInteractionEnabled
+    ShortcutContext { id: shortcutContext; targetWindow: root.Window.window }
+    function pathIsRaw(path) {
+        const lowered = path.toLowerCase();
+        return lowered.endsWith(".raw") || lowered.endsWith(".yuv");
+    }
+    function activePaneHeader(item) {
+        const candidate = item || root
+        if (candidate.visible && candidate.objectName === "paneHeader-" + root.workspaceController.activePaneIndex)
+            return candidate
+        const children = candidate.children || []
+        for (let i = 0; i < children.length; ++i) {
+            const result = activePaneHeader(children[i])
+            if (result) return result
+        }
+        return null
+    }
+    readonly property bool searchInputFocused: {
+        const focused = root.Window.window ? root.Window.window.activeFocusItem : null
+        return focused && String(focused.objectName).indexOf("paneSearchField-") === 0
+    }
+    function paneController(index) {
+        const availablePanes = root.workspaceController.panes
+        return availablePanes && index >= 0 && index < availablePanes.length
+                ? availablePanes[index] : root.controller
+    }
+    function configuredShortcut(action, fallback) {
+        const revision = root.settingsController
+                ? root.settingsController.shortcutsRevision : 0
+        return root.settingsController
+                ? root.settingsController.shortcutFor(action) : fallback
+    }
+    function configuredShortcutLabel(action, fallback) {
+        const revision = root.settingsController ? root.settingsController.shortcutsRevision : 0
+        const entries = root.settingsController ? root.settingsController.shortcutEntries : []
+        for (let i = 0; i < entries.length; ++i) {
+            if (entries[i].id === action) return entries[i].nativeSequence
+        }
+        return fallback
+    }
+    function setSmoothDisplay(enabled) {
+        if (root.settingsController && root.settingsController.smoothDisplay !== undefined)
+            root.settingsController.smoothDisplay = enabled
+        else
+            root.smoothDisplay = enabled
+    }
+
+
+    TopToolbar {
+        id: toolbar
+        objectName: "topToolbar"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: root.titleBarHeight
+        captionButtonsWidth: root.captionButtonsWidth
+        iconPrefix: root.iconPrefix
+        displayMode: root.displayMode
+        sortMode: root.controller.sortMode
+        openFolderShortcutText: root.configuredShortcutLabel("openFolder", Qt.platform.os === "osx" ? "⌘O" : "Ctrl+O")
+        compareShortcutText: root.configuredShortcutLabel("compare", "C")
+        settingsVisible: !root.navigatorVisible
+        settingsShortcutText: root.configuredShortcutLabel("settings", Qt.platform.os === "osx" ? "⌘," : "Ctrl+,")
+        newFolderShortcutText: root.configuredShortcutLabel("newFolder", Qt.platform.os === "osx" ? "⇧⌘N" : "Ctrl+Shift+N")
+        searchShortcutText: root.configuredShortcutLabel("find", Qt.platform.os === "osx" ? "⌘F" : "Ctrl+F")
+        compareEnabled: root.workspaceController.canCompare
+        activePaneAvailable: root.workspaceController.hasActivePane === undefined
+                             ? true : root.workspaceController.hasActivePane
+        activeDirectoryAvailable: root.controller.currentDirectory.length > 0
+        canAddPane: root.workspaceController.canAddPane === undefined
+                    ? true : root.workspaceController.canAddPane
+        gridEnabled: root.workspaceController.paneCount === undefined ||
+                     root.workspaceController.paneCount <= 2
+        galleryEnabled: root.workspaceController.paneCount === undefined ||
+                        root.workspaceController.paneCount === 1
+        transformEnabled: root.controller.canTransform
+        smoothDisplay: root.smoothDisplay
+        navigationWidth: root.navigatorWidth
+    }
+
+    Connections {
+        target: toolbar.gridControl
+        function onClicked() { root.workspaceController.setActiveDisplayMode(0); }
+    }
+    Connections {
+        target: toolbar.listControl
+        function onClicked() { root.workspaceController.setActiveDisplayMode(1); }
+    }
+    Connections {
+        target: toolbar.galleryControl
+        function onClicked() {
+            root.workspaceController.setActiveDisplayMode(2)
+        }
+    }
+    Connections {
+        target: toolbar.sortControl
+        function onClicked() { sortMenu.popup(); }
+    }
+    Connections {
+        target: toolbar.openFolderControl
+        function onClicked() { root.controller.chooseDirectory(); }
+    }
+    Connections {
+        target: toolbar.newFolderControl
+        function onClicked() { newFolderDialog.open(); }
+    }
+    Connections {
+        target: toolbar.folderCompareControl
+        function onClicked() { root.workspaceController.addFileManagerPane(); }
+    }
+    Connections {
+        target: toolbar.compareControl
+        function onClicked() { root.workspaceController.compareSelected(); }
+    }
+    Connections {
+        target: toolbar.smoothDisplayControl
+        function onClicked() { root.setSmoothDisplay(toolbar.smoothDisplayControl.checked); }
+    }
+    Connections {
+        target: toolbar.transformControl
+        function onClicked() { imageOperationsMenu.popup(toolbar.transformControl, 0, toolbar.transformControl.height); }
+    }
+    AppMenu {
+        id: imageOperationsMenu
+        objectName: "imageOperationsMenu"
+        AppMenuItem {
+            text: qsTr("Rotate 90° counterclockwise")
+            enabled: root.controller.canTransform
+            onTriggered: root.controller.rotateSelectedCounterClockwise()
+        }
+        AppMenuItem {
+            text: qsTr("Rotate 90° clockwise")
+            enabled: root.controller.canTransform
+            onTriggered: root.controller.rotateSelectedClockwise()
+        }
+        AppMenuItem {
+            text: qsTr("Resize image…")
+            enabled: root.controller.canTransform
+            onTriggered: imageResizeDialog.openForSelection()
+        }
+    }
+    Connections {
+        target: toolbar.settingsControl
+        function onClicked() { root.settingsRequested(); }
+    }
+    Connections {
+        target: root.controller
+        function onGalleryImageChanged() {
+            if (root.controller.galleryImageReady && galleryProbeArea.containsMouse) {
+                Qt.callLater(function() {
+                    galleryWorkspace.refreshPixelProbe()
+                })
+            } else if (galleryWorkspace.pixelProbeText === qsTr("Loading pixel data…")) {
+                galleryWorkspace.pixelProbeText = ""
+            }
+        }
+        function onCurrentDirectoryChanged() {
+            // Delegates from the next thumbnail-model reset will select that folder's first image.
+            // Clear the retained URL now so the previous folder cannot keep owning the preview.
+            galleryWorkspace.resetPreview()
+        }
+    }
+    AppMenu {
+        id: sortMenu
+        AppMenuItem {
+            text: (root.controller.sortMode === 0 ? "✓  " : "    ") + qsTr("Name")
+            onTriggered: root.controller.setSortMode(0)
+        }
+        AppMenuItem {
+            text: (root.controller.sortMode === 1 ? "✓  " : "    ") + qsTr("Modified time")
+            onTriggered: root.controller.setSortMode(1)
+        }
+        AppMenuItem {
+            text: (root.controller.sortMode === 2 ? "✓  " : "    ") + qsTr("File size")
+            onTriggered: root.controller.setSortMode(2)
+        }
+        AppMenuItem {
+            text: (root.controller.sortMode === 3 ? "✓  " : "    ") + qsTr("File type")
+            onTriggered: root.controller.setSortMode(3)
+        }
+    }
+
+    ImageResizeDialog {
+        id: imageResizeDialog
+        parent: Overlay.overlay
+        controller: root.controller
+    }
+
+    Menu {
+        id: folderMenu
+        MenuItem {
+            text: qsTr("Open folder…")
+            onTriggered: root.controller.chooseDirectory()
+        }
+        MenuItem {
+            text: qsTr("Back")
+            enabled: root.controller.canGoBack
+            onTriggered: root.controller.navigateBack()
+        }
+        MenuItem {
+            text: qsTr("Forward")
+            enabled: root.controller.canGoForward
+            onTriggered: root.controller.navigateForward()
+        }
+        MenuItem {
+            text: qsTr("Parent folder")
+            enabled: root.controller.canGoUp
+            onTriggered: root.controller.navigateUp()
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: qsTr("Add browser pane")
+            enabled: root.workspaceController.canAddPane === undefined || root.workspaceController.canAddPane
+            onTriggered: root.workspaceController.addFileManagerPane()
+        }
+    }
+
+    Rectangle {
+        id: sidebarFooter
+        anchors.left: parent.left
+        anchors.bottom: statusRail.top
+        width: navigator.width
+        height: root.navigatorVisible ? 44 : 0
+        visible: root.navigatorVisible
+        color: Theme.sidebarSurface
+        Button {
+            id: sidebarSettings
+            objectName: "settingsButton"
+            anchors.fill: parent
+            anchors.margins: 6
+            text: qsTranslate("TopToolbar.ui", "Settings")
+            Accessible.name: text
+            hoverEnabled: true
+            onClicked: root.settingsRequested()
+            background: Rectangle {
+                radius: 5
+                color: sidebarSettings.down ? Theme.pressedSurface
+                    : sidebarSettings.hovered ? Theme.softHover : "transparent"
+                border.width: sidebarSettings.visualFocus ? 1 : 0
+                border.color: Theme.keyboardFocus
+            }
+            contentItem: Item {
+                Image {
+                    x: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 16; height: 16
+                    source: root.iconPrefix + "settings.svg"
+                }
+                Text {
+                    x: 38
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: sidebarSettings.text
+                    color: Theme.graphiteInk
+                    font.family: Theme.uiFont
+                    font.pixelSize: 13
+                }
+                Text {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.configuredShortcutLabel("settings", "Ctrl+,")
+                    color: Theme.faintInk
+                    font.family: Theme.uiFont
+                    font.pixelSize: 11
+                }
+            }
+        }
+    }
+
+    // Design reference: Quick Folder Navigator, collapsible with Cmd/Ctrl+B.
+    FolderNavigator {
+        id: navigator
+        objectName: "folderNavigator"
+        controller: root.controller
+        browsingEnabled: root.workspaceController.hasActivePane === undefined ||
+                         root.workspaceController.hasActivePane
+        iconPrefix: root.iconPrefix
+        anchors.left: parent.left
+        anchors.top: toolbar.bottom
+        anchors.bottom: sidebarFooter.top
+        width: root.navigatorVisible ? Math.min(root.navigatorWidth,
+            Math.max(200, root.width - root.effectiveInspectorWidth - 418)) : 0
+        opacity: root.navigatorVisible ? 1 : 0
+        Behavior on width {
+            enabled: !resizeMouse.pressed && !root.inspectorVisible
+            NumberAnimation {
+                duration: Theme.normal
+                easing.type: Easing.OutCubic
+            }
+        }
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Theme.fast
+            }
+        }
+    }
+
+    Rectangle {
+        id: gutter
+        anchors.left: navigator.right
+        anchors.top: toolbar.bottom
+        anchors.bottom: statusRail.top
+        width: root.navigatorVisible ? 1 : 0
+        color: resizeMouse.containsMouse || resizeMouse.pressed ? Theme.primaryButton : Theme.opticalGray
+        z: 20
+
+        MouseArea {
+            id: resizeMouse
+            anchors.centerIn: parent
+            width: 11
+            height: parent.height
+            enabled: root.navigatorVisible
+            hoverEnabled: true
+            cursorShape: Qt.SizeHorCursor
+            property real lastRootX: 0
+
+            onPressed: function (mouse) {
+                lastRootX = mapToItem(root, mouse.x, mouse.y).x;
+            }
+            onPositionChanged: function (mouse) {
+                if (!pressed)
+                    return;
+                const currentRootX = mapToItem(root, mouse.x, mouse.y).x;
+                const maximumWidth = Math.max(220, Math.min(420, root.width - 560));
+                root.navigatorWidth = Math.max(200, Math.min(maximumWidth,
+                                                             root.navigatorWidth + currentRootX - lastRootX));
+                lastRootX = currentRootX;
+            }
+        }
+    }
+
+    // The production workspace keeps every folder session in the main window.
+    // SplitView is recreated when the pane count changes, which intentionally
+    // restores equal proportions after add/close operations.
+    Item {
+        id: paneWorkspace
+        objectName: "paneWorkspace"
+        enabled: root.contentInteractionEnabled
+        visible: root.displayMode !== 2 || root.workspaceController.paneCount !== 1
+        anchors.left: gutter.right
+        anchors.right: inspectorResizeHandle.left
+        anchors.top: toolbar.bottom
+        anchors.bottom: statusRail.top
+        anchors.margins: root.workspaceController.paneCount === 1 ? 0 : 8
+
+        Loader {
+            id: paneLayoutLoader
+            anchors.fill: parent
+            sourceComponent: {
+                const count = root.workspaceController.paneCount
+                if (count <= 1) return singlePaneComponent
+                if (count === 4) return fourPaneComponent
+                return horizontalPanesComponent
+            }
+        }
+    }
+
+    Component {
+        id: singlePaneComponent
+        BrowserPane {
+            controller: root.paneController(0)
+            workspaceController: root.workspaceController
+            settingsController: root.settingsController
+            paneIndex: 0
+            iconPrefix: root.iconPrefix
+            contentInteractionEnabled: root.contentInteractionEnabled
+            onNewFolderRequested: newFolderDialog.open()
+        }
+    }
+
+    Component {
+        id: horizontalPanesComponent
+        SplitView {
+            id: horizontalSplit
+            orientation: Qt.Horizontal
+            function resetEqual() {
+                const equalWidth = (width - Math.max(0, paneRepeater.count - 1) * 7) /
+                                   Math.max(1, paneRepeater.count)
+                for (let index = 0; index < paneRepeater.count; ++index) {
+                    const pane = paneRepeater.itemAt(index)
+                    if (pane)
+                        pane.SplitView.preferredWidth = equalWidth
+                }
+            }
+            handle: Rectangle {
+                objectName: "horizontalPaneHandle"
+                implicitWidth: 7
+                color: SplitHandle.pressed || SplitHandle.hovered ? Theme.accentBorder : "transparent"
+                property bool handlePressed: SplitHandle.pressed
+                property real pressCoordinate: 0
+                property double lastClickAt: 0
+                onHandlePressedChanged: {
+                    if (handlePressed) {
+                        pressCoordinate = x
+                        return
+                    }
+                    if (Math.abs(x - pressCoordinate) > 1) {
+                        lastClickAt = 0
+                        return
+                    }
+                    const now = Date.now()
+                    if (now - lastClickAt <= 500) {
+                        horizontalSplit.resetEqual()
+                        lastClickAt = 0
+                    } else {
+                        lastClickAt = now
+                    }
+                }
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 1
+                    height: parent.height
+                    color: SplitHandle.pressed || SplitHandle.hovered ? Theme.primaryButton : Theme.opticalGray
+                }
+            }
+            Repeater {
+                id: paneRepeater
+                model: root.workspaceController.panes
+                delegate: BrowserPane {
+                    required property var modelData
+                    required property int index
+                    controller: modelData || root.controller
+                    workspaceController: root.workspaceController
+                    settingsController: root.settingsController
+                    paneIndex: index
+                    iconPrefix: root.iconPrefix
+                    contentInteractionEnabled: root.contentInteractionEnabled
+                    SplitView.fillWidth: index === paneRepeater.count - 1
+                    SplitView.minimumWidth: 190
+                    SplitView.preferredWidth: (horizontalSplit.width -
+                                               Math.max(0, paneRepeater.count - 1) * 7) /
+                                              Math.max(1, paneRepeater.count)
+                    onNewFolderRequested: newFolderDialog.open()
+                }
+            }
+        }
+    }
+
+    Component {
+        id: fourPaneComponent
+        SplitView {
+            id: verticalSplit
+            orientation: Qt.Vertical
+            function resetEqual() {
+                const equalHeight = (verticalSplit.height - 7) / 2
+                topRow.SplitView.preferredHeight = equalHeight
+                bottomRow.SplitView.preferredHeight = equalHeight
+            }
+            handle: Rectangle {
+                objectName: "verticalPaneHandle"
+                implicitHeight: 7
+                color: SplitHandle.pressed || SplitHandle.hovered ? Theme.accentBorder : "transparent"
+                property bool handlePressed: SplitHandle.pressed
+                property real pressCoordinate: 0
+                property double lastClickAt: 0
+                onHandlePressedChanged: {
+                    if (handlePressed) {
+                        pressCoordinate = y
+                        return
+                    }
+                    if (Math.abs(y - pressCoordinate) > 1) {
+                        lastClickAt = 0
+                        return
+                    }
+                    const now = Date.now()
+                    if (now - lastClickAt <= 500) {
+                        verticalSplit.resetEqual()
+                        lastClickAt = 0
+                    } else {
+                        lastClickAt = now
+                    }
+                }
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: parent.width
+                    height: 1
+                    color: SplitHandle.pressed || SplitHandle.hovered ? Theme.primaryButton : Theme.opticalGray
+                }
+            }
+            SplitView {
+                id: topRow
+                orientation: Qt.Horizontal
+                SplitView.fillHeight: false
+                SplitView.minimumHeight: 190
+                SplitView.preferredHeight: (verticalSplit.height - 7) / 2
+                function resetEqual() {
+                    const equalWidth = (topRow.width - 7) / 2
+                    topLeft.SplitView.preferredWidth = equalWidth
+                    topRight.SplitView.preferredWidth = equalWidth
+                }
+                handle: Rectangle {
+                    objectName: "topRowPaneHandle"
+                    implicitWidth: 7
+                    color: SplitHandle.pressed || SplitHandle.hovered ? Theme.accentBorder : "transparent"
+                    property bool handlePressed: SplitHandle.pressed
+                    property real pressCoordinate: 0
+                    property double lastClickAt: 0
+                    onHandlePressedChanged: {
+                        if (handlePressed) {
+                            pressCoordinate = x
+                            return
+                        }
+                        if (Math.abs(x - pressCoordinate) > 1) {
+                            lastClickAt = 0
+                            return
+                        }
+                        const now = Date.now()
+                        if (now - lastClickAt <= 500) {
+                            topRow.resetEqual()
+                            lastClickAt = 0
+                        } else {
+                            lastClickAt = now
+                        }
+                    }
+                    Rectangle { anchors.centerIn: parent; width: 1; height: parent.height; color: SplitHandle.pressed || SplitHandle.hovered ? Theme.primaryButton : Theme.opticalGray }
+                }
+                BrowserPane {
+                    id: topLeft
+                    controller: root.paneController(0)
+                    workspaceController: root.workspaceController
+                    settingsController: root.settingsController
+                    paneIndex: 0
+                    iconPrefix: root.iconPrefix
+                    contentInteractionEnabled: root.contentInteractionEnabled
+                    SplitView.fillWidth: false
+                    SplitView.minimumWidth: 190
+                    SplitView.preferredWidth: (topRow.width - 7) / 2
+                    onNewFolderRequested: newFolderDialog.open()
+                }
+                BrowserPane {
+                    id: topRight
+                    controller: root.paneController(1)
+                    workspaceController: root.workspaceController
+                    settingsController: root.settingsController
+                    paneIndex: 1
+                    iconPrefix: root.iconPrefix
+                    contentInteractionEnabled: root.contentInteractionEnabled
+                    SplitView.fillWidth: true
+                    SplitView.minimumWidth: 190
+                    SplitView.preferredWidth: (topRow.width - 7) / 2
+                    onNewFolderRequested: newFolderDialog.open()
+                }
+            }
+            SplitView {
+                id: bottomRow
+                orientation: Qt.Horizontal
+                SplitView.fillHeight: true
+                SplitView.minimumHeight: 190
+                SplitView.preferredHeight: (verticalSplit.height - 7) / 2
+                function resetEqual() {
+                    const equalWidth = (bottomRow.width - 7) / 2
+                    bottomLeft.SplitView.preferredWidth = equalWidth
+                    bottomRight.SplitView.preferredWidth = equalWidth
+                }
+                handle: Rectangle {
+                    objectName: "bottomRowPaneHandle"
+                    implicitWidth: 7
+                    color: SplitHandle.pressed || SplitHandle.hovered ? Theme.accentBorder : "transparent"
+                    property bool handlePressed: SplitHandle.pressed
+                    property real pressCoordinate: 0
+                    property double lastClickAt: 0
+                    onHandlePressedChanged: {
+                        if (handlePressed) {
+                            pressCoordinate = x
+                            return
+                        }
+                        if (Math.abs(x - pressCoordinate) > 1) {
+                            lastClickAt = 0
+                            return
+                        }
+                        const now = Date.now()
+                        if (now - lastClickAt <= 500) {
+                            bottomRow.resetEqual()
+                            lastClickAt = 0
+                        } else {
+                            lastClickAt = now
+                        }
+                    }
+                    Rectangle { anchors.centerIn: parent; width: 1; height: parent.height; color: SplitHandle.pressed || SplitHandle.hovered ? Theme.primaryButton : Theme.opticalGray }
+                }
+                BrowserPane {
+                    id: bottomLeft
+                    controller: root.paneController(2)
+                    workspaceController: root.workspaceController
+                    settingsController: root.settingsController
+                    paneIndex: 2
+                    iconPrefix: root.iconPrefix
+                    contentInteractionEnabled: root.contentInteractionEnabled
+                    SplitView.fillWidth: false
+                    SplitView.minimumWidth: 190
+                    SplitView.preferredWidth: (bottomRow.width - 7) / 2
+                    onNewFolderRequested: newFolderDialog.open()
+                }
+                BrowserPane {
+                    id: bottomRight
+                    controller: root.paneController(3)
+                    workspaceController: root.workspaceController
+                    settingsController: root.settingsController
+                    paneIndex: 3
+                    iconPrefix: root.iconPrefix
+                    contentInteractionEnabled: root.contentInteractionEnabled
+                    SplitView.fillWidth: true
+                    SplitView.minimumWidth: 190
+                    SplitView.preferredWidth: (bottomRow.width - 7) / 2
+                    onNewFolderRequested: newFolderDialog.open()
+                }
+            }
+        }
+    }
+
+    // Gallery view: a quiet inspection surface with a large fitted preview and
+    // a compact contact strip. It uses the same production thumbnail model.
+    PaneHeader {
+        id: galleryPaneHeader
+        searchReturnTarget: galleryFlick
+        enabled: root.contentInteractionEnabled
+        visible: galleryWorkspace.visible
+        anchors.left: gutter.right
+        anchors.right: inspectorResizeHandle.left
+        anchors.top: toolbar.bottom
+        controller: root.controller
+        workspaceController: root.workspaceController
+        paneIndex: 0
+        settingsController: root.settingsController
+        iconPrefix: root.iconPrefix
+    }
+
+    Item {
+        id: galleryWorkspace
+        objectName: "galleryWorkspace"
+        enabled: root.contentInteractionEnabled
+        property url currentPreviewUrl: ""
+        property string currentPreviewPath: ""
+        property string currentPreviewName: ""
+        property string currentPreviewTechnicalLabel: ""
+        property string contextPath: ""
+        property bool contextIsDirectory: false
+        property string pixelProbeText: ""
+        property bool actualPixels: false
+        property real manualZoom: 1.0
+        readonly property bool fullResolutionAvailable:
+            root.controller.galleryFullResolution === undefined
+                ? false : root.controller.galleryFullResolution
+        readonly property bool useFullResolutionTexture:
+            fullResolutionAvailable && actualPixels && manualZoom >= 1.0 &&
+            !root.smoothDisplay
+        function fitImage() {
+            actualPixels = false
+            manualZoom = 1.0
+            galleryFlick.contentX = 0
+            galleryFlick.contentY = 0
+        }
+        function showActualPixels() {
+            actualPixels = true
+            manualZoom = 1.0
+            Qt.callLater(function() {
+                galleryFlick.contentX = Math.max(0, (galleryFlick.contentWidth - galleryFlick.width) / 2)
+                galleryFlick.contentY = Math.max(0, (galleryFlick.contentHeight - galleryFlick.height) / 2)
+            })
+        }
+
+        function updatePixelProbe(viewportX, viewportY) {
+            if (!root.controller.galleryImageReady || galleryImage.paintedWidth <= 0 ||
+                    galleryImage.paintedHeight <= 0 ||
+                    (useFullResolutionTexture && galleryImage.status !== Image.Ready)) {
+                pixelProbeText = qsTr("Loading pixel data…")
+                return
+            }
+            const point = galleryFlick.mapToItem(galleryImage, viewportX, viewportY)
+            const left = (galleryImage.width - galleryImage.paintedWidth) / 2
+            const top = (galleryImage.height - galleryImage.paintedHeight) / 2
+            const sourceSize = root.controller.galleryImageSize
+            const px = Math.floor((point.x - left) * sourceSize.width /
+                                  galleryImage.paintedWidth)
+            const py = Math.floor((point.y - top) * sourceSize.height /
+                                  galleryImage.paintedHeight)
+            const value = root.controller.probeGalleryPixel(px, py)
+            pixelProbeText = value.length > 0 ? value : qsTr("Outside image")
+        }
+        function refreshPixelProbe() {
+            if (!galleryProbeArea.containsMouse)
+                return
+            const point = galleryProbeArea.mapToItem(galleryFlick,
+                                                     galleryProbeArea.mouseX,
+                                                     galleryProbeArea.mouseY)
+            updatePixelProbe(point.x, point.y)
+        }
+        function showPreview(path, previewUrl, fileName, technicalLabel, directory) {
+            if (directory)
+                return;
+            currentPreviewPath = path;
+            currentPreviewUrl = previewUrl;
+            currentPreviewName = fileName;
+            currentPreviewTechnicalLabel = technicalLabel;
+            pixelProbeText = "";
+            actualPixels = false;
+            manualZoom = 1.0;
+            if (visible) root.controller.setGalleryPath(path);
+        }
+        function resetPreview() {
+            currentPreviewPath = "";
+            currentPreviewUrl = "";
+            currentPreviewName = "";
+            currentPreviewTechnicalLabel = "";
+            contextPath = "";
+            contextIsDirectory = false;
+            pixelProbeText = "";
+            actualPixels = false;
+            manualZoom = 1.0;
+            root.controller.setGalleryPath("");
+        }
+        function showImageMenu(x, y) {
+            if (root.controller.selectionCount === 0)
+                return;
+            if (contextIsDirectory)
+                galleryFolderContextMenu.popup(x, y);
+            else if (root.pathIsRaw(contextPath))
+                galleryRawFileContextMenu.popup(x, y);
+            else
+                galleryFileContextMenu.popup(x, y);
+        }
+        visible: root.displayMode === 2 && root.workspaceController.paneCount === 1
+        onVisibleChanged: root.controller.setGalleryPath(visible ? currentPreviewPath : "")
+        anchors.left: gutter.right
+        anchors.right: inspectorResizeHandle.left
+        anchors.top: galleryPaneHeader.bottom
+        anchors.bottom: statusRail.top
+        anchors.margins: root.inspectorVisible ? 8 : 16
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: galleryResizeHandle.left
+            anchors.rightMargin: 4
+            color: Theme.softHover
+            radius: 8
+            clip: true
+
+            Rectangle {
+                id: galleryInfoRail
+                objectName: "galleryInfoRail"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 38
+                color: Theme.paperWhite
+                border.color: Theme.opticalGray
+                border.width: 0
+
+                Text {
+                    objectName: "galleryInfoText"
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: galleryZoomLabel.left
+                    anchors.rightMargin: 10
+                    text: root.controller.galleryInfoText.length > 0
+                          ? root.controller.galleryInfoText
+                          : galleryWorkspace.currentPreviewPath.length > 0 ? qsTr("Loading image information…")
+                                                                           : qsTr("No image selected")
+                    elide: Text.ElideRight
+                    color: Theme.graphiteInk
+                    font.family: Theme.monoFont
+                    font.pixelSize: 10
+                }
+                Text {
+                    id: galleryZoomLabel
+                    anchors.right: galleryControls.left
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 54
+                    horizontalAlignment: Text.AlignRight
+                    text: {
+                        if (!root.controller.galleryImageReady || root.controller.galleryImageSize.width <= 0)
+                            return "—";
+                        if (galleryWorkspace.actualPixels)
+                            return (galleryWorkspace.manualZoom * 100).toFixed(1) + "%";
+                        const scale = Math.min(galleryImage.paintedWidth / root.controller.galleryImageSize.width,
+                                               galleryImage.paintedHeight / root.controller.galleryImageSize.height);
+                        return (scale * 100).toFixed(1) + "%";
+                    }
+                    color: Theme.mutedInk
+                    font.family: Theme.monoFont
+                    font.pixelSize: 10
+                }
+
+                Row {
+                    id: galleryControls
+                    anchors.right: parent.right
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 4
+
+                    AppIconButton {
+                        id: actualPixelsButton
+                        objectName: "galleryActualPixelsButton"
+                        controlSize: 28
+                        renderedIconSize: 16
+                        iconSource: root.iconPrefix + "actual-size.svg"
+                        toolTipText: qsTr("100% (1:1)")
+                        enabled: galleryWorkspace.currentPreviewPath.length > 0
+                        checkable: true
+                        autoExclusive: true
+                        checked: galleryWorkspace.actualPixels &&
+                                 Math.abs(galleryWorkspace.manualZoom - 1.0) < 0.001
+                        shortcutText: "1"
+                        onClicked: galleryWorkspace.showActualPixels()
+                    }
+                    AppIconButton {
+                        id: fitButton
+                        objectName: "galleryFitButton"
+                        controlSize: 28
+                        renderedIconSize: 16
+                        iconSource: root.iconPrefix + "fit.svg"
+                        toolTipText: qsTr("Fit to window")
+                        enabled: galleryWorkspace.currentPreviewPath.length > 0
+                        checkable: true
+                        autoExclusive: true
+                        checked: !galleryWorkspace.actualPixels
+                        shortcutText: "F"
+                        onClicked: galleryWorkspace.fitImage()
+                    }
+                    AppIconButton {
+                        id: fullScreenButton
+                        objectName: "galleryFullScreenButton"
+                        controlSize: 28
+                        renderedIconSize: 16
+                        iconSource: root.iconPrefix + "fullscreen.svg"
+                        toolTipText: qsTr("Open full screen")
+                        enabled: galleryWorkspace.currentPreviewPath.length > 0
+                        onClicked: root.controller.activatePath(galleryWorkspace.currentPreviewPath)
+                    }
+                }
+            }
+
+            Rectangle {
+                id: galleryImageWell
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: galleryInfoRail.top
+                color: Theme.softHover
+                clip: true
+
+                Flickable {
+                    id: galleryFlick
+                    anchors.fill: parent
+                    clip: true
+                    interactive: root.contentInteractionEnabled
+                    boundsBehavior: Flickable.StopAtBounds
+                    onInteractiveChanged: {
+                        if (!interactive)
+                            cancelFlick()
+                    }
+                    onContentXChanged: galleryWorkspace.refreshPixelProbe()
+                    onContentYChanged: galleryWorkspace.refreshPixelProbe()
+                    contentWidth: galleryWorkspace.actualPixels
+                                  ? Math.max(width, galleryImage.width + 36) : width
+                    contentHeight: galleryWorkspace.actualPixels
+                                   ? Math.max(height, galleryImage.height + 36) : height
+
+                    // Show the cached contact-sheet pixels while the larger preview
+                    // decodes. Its demand is independent of the strip's viewport.
+                    Image {
+                        objectName: "galleryThumbnailPlaceholder"
+                        x: galleryImage.x
+                        y: galleryImage.y
+                        width: galleryImage.width
+                        height: galleryImage.height
+                        visible: galleryImage.status !== Image.Ready && !galleryWorkspace.actualPixels
+                        source: galleryWorkspace.visible && galleryWorkspace.currentPreviewUrl.toString().length > 0
+                                ? galleryWorkspace.currentPreviewUrl.toString() + "&purpose=gallery-thumbnail" : ""
+                        sourceSize: Qt.size(320, 240)
+                        asynchronous: true
+                        cache: true
+                        fillMode: Image.PreserveAspectFit
+                        smooth: root.smoothDisplay
+                    }
+
+                    Image {
+                        id: galleryImage
+                        objectName: "galleryImage"
+                        x: galleryWorkspace.actualPixels
+                           ? Math.max(18, (galleryFlick.width - width) / 2) : 18
+                        y: galleryWorkspace.actualPixels
+                           ? Math.max(18, (galleryFlick.height - height) / 2) : 18
+                        width: galleryWorkspace.actualPixels && root.controller.galleryImageSize.width > 0
+                               ? root.controller.galleryImageSize.width * galleryWorkspace.manualZoom
+                               : Math.max(1, galleryFlick.width - 36)
+                        height: galleryWorkspace.actualPixels && root.controller.galleryImageSize.height > 0
+                                ? root.controller.galleryImageSize.height * galleryWorkspace.manualZoom
+                                : Math.max(1, galleryFlick.height - 36)
+                        source: galleryWorkspace.visible && galleryWorkspace.currentPreviewUrl.toString().length > 0
+                                ? galleryWorkspace.currentPreviewUrl.toString() +
+                                  (galleryWorkspace.useFullResolutionTexture
+                                   ? "&purpose=gallery-full" : "&purpose=gallery")
+                                : ""
+                        // Keep the bounded preview while fitting or smoothly scaling. Pixel
+                        // inspection switches to the already requested full frame only when a
+                        // nearest-neighbor view reaches 1:1, avoiding both false pixel readings
+                        // and repeated source reloads during ordinary zoom gestures.
+                        sourceSize: Qt.size(2048, 2048)
+                        asynchronous: true
+                        cache: true
+                        property string readyPath: ""
+                        retainWhileLoading: readyPath === galleryWorkspace.currentPreviewPath
+                        smooth: root.smoothDisplay
+                        mipmap: root.smoothDisplay
+                        fillMode: galleryWorkspace.actualPixels ? Image.Stretch : Image.PreserveAspectFit
+                        onStatusChanged: {
+                            if (status === Image.Ready) readyPath = galleryWorkspace.currentPreviewPath
+                            if (status === Image.Ready && galleryProbeArea.containsMouse)
+                                galleryWorkspace.refreshPixelProbe()
+                        }
+                    }
+
+                    MouseArea {
+                        id: galleryProbeArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.BackButton | Qt.ForwardButton
+                        preventStealing: false
+                        onPositionChanged: function (mouse) {
+                            const point = mapToItem(galleryFlick, mouse.x, mouse.y)
+                            galleryWorkspace.updatePixelProbe(point.x, point.y)
+                        }
+                        onExited: galleryWorkspace.pixelProbeText = ""
+                        onWheel: function (wheel) {
+                            if (!root.controller.galleryImageReady)
+                                return;
+                            const sourceSize = root.controller.galleryImageSize;
+                            if (sourceSize.width <= 0 || sourceSize.height <= 0 ||
+                                    galleryImage.paintedWidth <= 0 || galleryImage.paintedHeight <= 0)
+                                return;
+                            // Map through the painted image rather than assuming a fitted image
+                            // starts at (0, 0). This keeps the source pixel below the cursor fixed.
+                            const imagePoint = mapToItem(galleryImage, wheel.x, wheel.y);
+                            const imageLeft = (galleryImage.width - galleryImage.paintedWidth) / 2;
+                            const imageTop = (galleryImage.height - galleryImage.paintedHeight) / 2;
+                            const sourceX = Math.max(0, Math.min(sourceSize.width,
+                                (imagePoint.x - imageLeft) * sourceSize.width / galleryImage.paintedWidth));
+                            const sourceY = Math.max(0, Math.min(sourceSize.height,
+                                (imagePoint.y - imageTop) * sourceSize.height / galleryImage.paintedHeight));
+                            const oldScale = galleryImage.paintedWidth / sourceSize.width;
+                            const factor = Math.pow(1.2, wheel.angleDelta.y / 120.0);
+                            const newScale = Math.max(0.02, Math.min(32.0, oldScale * factor));
+                            const viewportPoint = mapToItem(galleryFlick, wheel.x, wheel.y);
+                            galleryWorkspace.actualPixels = true;
+                            galleryWorkspace.manualZoom = newScale;
+                            Qt.callLater(function () {
+                                galleryFlick.contentX = Math.max(0, Math.min(galleryFlick.contentWidth - galleryFlick.width,
+                                    galleryImage.x + sourceX * newScale - viewportPoint.x));
+                                galleryFlick.contentY = Math.max(0, Math.min(galleryFlick.contentHeight - galleryFlick.height,
+                                    galleryImage.y + sourceY * newScale - viewportPoint.y));
+                                galleryWorkspace.updatePixelProbe(viewportPoint.x, viewportPoint.y)
+                            });
+                            wheel.accepted = true;
+                        }
+                        onClicked: function (mouse) {
+                            if (mouse.button === Qt.BackButton) {
+                                root.controller.navigateBack();
+                                return;
+                            }
+                            if (mouse.button === Qt.ForwardButton) {
+                                root.controller.navigateForward();
+                                return;
+                            }
+                            if (mouse.button === Qt.RightButton) {
+                                if (root.controller.selectedPaths.indexOf(galleryWorkspace.currentPreviewPath) < 0)
+                                    root.controller.selectPath(galleryWorkspace.currentPreviewPath);
+                                galleryWorkspace.contextPath = galleryWorkspace.currentPreviewPath;
+                                galleryWorkspace.contextIsDirectory = false;
+                                const point = mapToItem(root, mouse.x, mouse.y);
+                                galleryWorkspace.showImageMenu(point.x, point.y);
+                            } else if (galleryWorkspace.currentPreviewPath.length > 0) {
+                                root.controller.selectPath(galleryWorkspace.currentPreviewPath);
+                            }
+                        }
+                        onDoubleClicked: {
+                            if (galleryWorkspace.currentPreviewPath.length > 0)
+                                root.controller.activatePath(galleryWorkspace.currentPreviewPath);
+                        }
+                    }
+                }
+            }
+        }
+
+        Item {
+            id: galleryResizeHandle
+            objectName: "galleryResizeHandle"
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            x: galleryStripPanel.x - width / 2
+            width: 12
+            z: 30
+
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 1
+                color: galleryResizeMouse.containsMouse || galleryResizeMouse.pressed
+                       ? Theme.primaryButton : Theme.opticalGray
+            }
+            MouseArea {
+                id: galleryResizeMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.SizeHorCursor
+                property real lastRootX: 0
+                onPressed: function (mouse) {
+                    lastRootX = mapToItem(root, mouse.x, mouse.y).x;
+                }
+                onPositionChanged: function (mouse) {
+                    if (!pressed)
+                        return;
+                    const currentRootX = mapToItem(root, mouse.x, mouse.y).x;
+                    const maximumWidth = Math.max(240, galleryWorkspace.width - 420);
+                    root.galleryStripWidth = Math.max(220, Math.min(maximumWidth,
+                                                                     root.galleryStripWidth - (currentRootX - lastRootX)));
+                    lastRootX = currentRootX;
+                }
+            }
+        }
+
+        Rectangle {
+            id: galleryStripPanel
+            objectName: "galleryStripPanel"
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: Math.max(220, Math.min(root.galleryStripWidth, galleryWorkspace.width - 420))
+            color: Theme.paperWhite
+            radius: 8
+            border.color: Theme.opticalGray
+            border.width: 1
+
+            GridView {
+                id: galleryStrip
+                objectName: "galleryStrip"
+                anchors.fill: parent
+                anchors.margins: 8
+                // Reserve a real workspace footer so users always have a dependable
+                // blank target for the workspace context menu.
+                anchors.bottomMargin: 60
+                clip: true
+                model: root.displayMode === 2 && root.workspaceController.paneCount === 1
+                       ? root.controller.thumbnails : null
+                currentIndex: 0
+                // Keep the contact cards at one optical size. GridView wraps them into
+                // more/fewer columns when the divider moves instead of stretching them.
+                cellWidth: 132
+                cellHeight: 116
+                boundsBehavior: Flickable.StopAtBounds
+                interactive: root.contentInteractionEnabled
+                reuseItems: true
+                onInteractiveChanged: {
+                    if (!interactive)
+                        cancelFlick()
+                }
+
+                cacheBuffer: Math.max(0, height)
+                ThumbnailViewport { view: galleryStrip; controller: root.controller }
+                delegate: Item {
+                    property bool thumbnailDemand: false
+                    readonly property bool thumbnailReady: galleryPreview.status === Image.Ready
+                    id: galleryDelegate
+                    objectName: "galleryDelegate-" + galleryDelegate.index
+                    readonly property alias dragHandler: galleryDragHandler
+                    required property int index
+                    required property string path
+                    required property string fileName
+                    required property string technicalLabel
+                    required property url thumbnailUrl
+                    required property bool isDirectory
+                    required property bool isSelected
+
+                    property url previewUrl: thumbnailUrl
+                    property string previewName: fileName
+                    property string previewTechnicalLabel: technicalLabel
+
+                    Drag.active: galleryDragHandler.active && galleryDelegate.isSelected
+                    Drag.dragType: Drag.Automatic
+                    Drag.supportedActions: Qt.CopyAction
+                    Drag.mimeData: ({ "text/uri-list": root.controller.selectedUriList })
+                    Drag.imageSource: galleryDragHandler.active && galleryDelegate.thumbnailDemand
+                                      ? galleryDelegate.thumbnailUrl : ""
+                    Drag.hotSpot.x: galleryDelegate.width / 2
+                    Drag.hotSpot.y: Math.min(galleryDelegate.height / 2, 52)
+
+                    onTechnicalLabelChanged: {
+                        if (galleryWorkspace.currentPreviewPath === galleryDelegate.path)
+                            galleryWorkspace.currentPreviewTechnicalLabel = technicalLabel;
+                    }
+                    onThumbnailUrlChanged: {
+                        if (galleryWorkspace.currentPreviewPath === galleryDelegate.path)
+                            galleryWorkspace.currentPreviewUrl = thumbnailUrl;
+                    }
+
+                    Component.onCompleted: {
+                        if (galleryDelegate.index === 0 && galleryWorkspace.currentPreviewUrl.toString().length === 0) {
+                            galleryWorkspace.showPreview(galleryDelegate.path, galleryDelegate.thumbnailUrl,
+                                                         galleryDelegate.fileName,
+                                                         galleryDelegate.technicalLabel,
+                                                         galleryDelegate.isDirectory);
+                        }
+                    }
+
+                    width: galleryStrip.cellWidth
+                    height: galleryStrip.cellHeight
+
+                    Rectangle {
+                        id: galleryCard
+                        objectName: "galleryCard-" + galleryDelegate.index
+                        anchors.fill: parent
+                        anchors.margins: 4
+                        radius: 6
+                        color: galleryDelegate.isSelected ? Theme.fileSelectionSurface : galleryMouse.containsMouse ? Theme.softHover : "transparent"
+                        border.color: galleryStrip.activeFocus && galleryDelegate.GridView.isCurrentItem
+                                      ? Theme.keyboardFocus
+                                      : galleryDelegate.isSelected ? Theme.fileSelectionBorder : "transparent"
+                        border.width: galleryStrip.activeFocus && galleryDelegate.GridView.isCurrentItem ? 2 : 1
+                        PathToolTip {
+                            objectName: "galleryPathToolTip"
+                            parent: galleryCard
+                            path: galleryDelegate.path
+                            fileName: galleryDelegate.fileName
+                            visible: galleryMouse.containsMouse && !galleryDragHandler.active && galleryDelegate.path.length > 0
+                        }
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 5
+                            height: 72
+                            visible: !galleryDelegate.isDirectory
+                            color: Theme.thumbnailWell
+                        }
+                        Image {
+                            objectName: "galleryStripPreview-" + galleryDelegate.index
+                            id: galleryPreview
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 5
+                            height: 72
+                            source: galleryDelegate.thumbnailDemand && !galleryDelegate.isDirectory
+                                    ? galleryDelegate.thumbnailUrl : ""
+                            visible: !galleryDelegate.isDirectory
+                            sourceSize: Qt.size(320, 240)
+                            asynchronous: true
+                            cache: true
+                            fillMode: root.settingsController && root.settingsController.thumbnailPresentation === "fill"
+                                      ? Image.PreserveAspectCrop : Image.PreserveAspectFit
+                            smooth: root.smoothDisplay
+                            mipmap: root.smoothDisplay
+                        }
+                        Image {
+                            objectName: "galleryFolderIcon-" + galleryDelegate.index
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.top: parent.top
+                            anchors.topMargin: 12
+                            width: 52
+                            height: 52
+                            source: galleryDelegate.isDirectory ? galleryDelegate.thumbnailUrl : ""
+                            visible: galleryDelegate.isDirectory
+                            sourceSize: Qt.size(160, 160)
+                            asynchronous: true
+                            cache: true
+                            fillMode: Image.PreserveAspectFit
+                            smooth: true
+                            mipmap: true
+                        }
+                        Text {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            anchors.leftMargin: 6
+                            anchors.rightMargin: 6
+                            anchors.bottomMargin: 7
+                            text: galleryDelegate.fileName
+                            elide: Text.ElideMiddle
+                            color: Theme.graphiteInk
+                            font.family: Theme.uiFont
+                            font.pixelSize: 10
+                        }
+                        MouseArea {
+                            id: galleryMouse
+                            objectName: "galleryMouse-" + galleryDelegate.index
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.BackButton | Qt.ForwardButton
+                            onClicked: function (mouse) {
+                                if (mouse.button === Qt.BackButton) {
+                                    root.controller.navigateBack();
+                                    return;
+                                }
+                                if (mouse.button === Qt.ForwardButton) {
+                                    root.controller.navigateForward();
+                                    return;
+                                }
+                                galleryStrip.currentIndex = galleryDelegate.index;
+                                galleryWorkspace.showPreview(galleryDelegate.path,
+                                                             galleryDelegate.thumbnailUrl,
+                                                             galleryDelegate.fileName,
+                                                             galleryDelegate.technicalLabel,
+                                                             galleryDelegate.isDirectory);
+                                if (mouse.button === Qt.RightButton) {
+                                    if (!galleryDelegate.isSelected)
+                                        root.controller.selectPath(galleryDelegate.path);
+                                    galleryWorkspace.contextPath = galleryDelegate.path;
+                                    galleryWorkspace.contextIsDirectory = galleryDelegate.isDirectory;
+                                    const point = mapToItem(root, mouse.x, mouse.y);
+                                    galleryWorkspace.showImageMenu(point.x, point.y);
+                                    return;
+                                }
+                                const toggle = (mouse.modifiers & Qt.ControlModifier) || (mouse.modifiers & Qt.MetaModifier);
+                                const extend = (mouse.modifiers & Qt.ShiftModifier);
+                                root.controller.selectPath(galleryDelegate.path, extend, toggle);
+                            }
+                            onDoubleClicked: root.controller.activatePath(galleryDelegate.path)
+                        }
+                        DragHandler {
+                            id: galleryDragHandler
+                            enabled: root.contentInteractionEnabled &&
+                                     !galleryFileContextMenu.visible &&
+                                     !galleryRawFileContextMenu.visible &&
+                                     !galleryFolderContextMenu.visible &&
+                                     !workspaceContextMenu.visible
+                            acceptedButtons: Qt.LeftButton
+                            target: null
+                            onActiveChanged: {
+                                if (active && !galleryDelegate.isSelected)
+                                    root.controller.selectPath(galleryDelegate.path);
+                            }
+                        }
+                    }
+                }
+
+                ScrollBar.vertical: ScrollBar {
+                    policy: ScrollBar.AsNeeded
+                }
+            }
+
+            MouseArea {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 8
+                height: 44
+                acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.BackButton | Qt.ForwardButton
+                onClicked: function (mouse) {
+                    if (mouse.button === Qt.BackButton) {
+                        root.controller.navigateBack();
+                        return;
+                    }
+                    if (mouse.button === Qt.ForwardButton) {
+                        root.controller.navigateForward();
+                        return;
+                    }
+                    if (mouse.button === Qt.RightButton) {
+                        const point = mapToItem(root, mouse.x, mouse.y);
+                        workspaceContextMenu.popup(point.x, point.y);
+                    } else {
+                        root.workspaceController.clearSelection();
+                    }
+                }
+            }
+        }
+    }
+
+    // One window-wide external drop target preserves the original behavior in every view mode,
+    // including the large gallery preview. Internal thumbnail drags are intentionally ignored.
+    DropArea {
+        id: workspaceDropArea
+        enabled: root.displayMode === 2 && root.workspaceController.paneCount === 1
+        property bool externalDragActive: false
+        anchors.left: parent.left
+        anchors.right: inspectorResizeHandle.left
+        anchors.top: toolbar.bottom
+        anchors.bottom: statusRail.top
+        z: 80
+        onEntered: function (drag) {
+            externalDragActive = drag.source === null && drag.hasUrls;
+            if (externalDragActive)
+                drag.acceptProposedAction();
+        }
+        onExited: externalDragActive = false
+        onDropped: function (drop) {
+            if (drop.source === null && drop.hasUrls) {
+                root.controller.copyDroppedUrls(drop.urls);
+                drop.acceptProposedAction();
+            }
+            externalDragActive = false;
+        }
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: 8
+            visible: workspaceDropArea.externalDragActive
+            color: "#0A7893A6"
+            border.color: Theme.primaryButton
+            border.width: 1
+            radius: 8
+        }
+    }
+
+    Rectangle {
+        id: statusRail
+        objectName: "statusRail"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 32
+        color: Theme.paperWhite
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: Theme.opticalGray
+        }
+        Text {
+            objectName: "browserStatusLabel"
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            elide: Text.ElideRight
+            anchors.left: parent.left
+            anchors.leftMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.displayMode === 2 && galleryWorkspace.pixelProbeText.length > 0
+                  ? galleryWorkspace.pixelProbeText : root.workspaceController.statusText
+            color: Theme.mutedInk
+            font.family: root.displayMode === 2 && galleryWorkspace.pixelProbeText.length > 0 ? Theme.monoFont : Theme.uiFont
+            font.pixelSize: 12
+        }
+    }
+
+    AppMenu {
+        id: workspaceContextMenu
+        objectName: "workspaceContextMenu"
+        AppMenuItem {
+            text: Qt.platform.os === "osx" ? qsTr("Open in Finder")
+                                          : qsTr("Open in File Explorer")
+            onTriggered: root.controller.openCurrentDirectoryInFileManager()
+        }
+        AppMenuSeparator {}
+        AppMenuItem {
+            text: qsTr("Refresh")
+            shortcutText: Qt.platform.os === "osx" ? "⌘R" : "Ctrl+R"
+            onTriggered: root.controller.refresh()
+        }
+        AppMenuItem {
+            text: qsTr("Select all")
+            shortcutText: Qt.platform.os === "osx" ? "⌘A" : "Ctrl+A"
+            onTriggered: root.controller.selectAll()
+        }
+        AppMenuItem {
+            text: qsTr("Paste")
+            shortcutText: Qt.platform.os === "osx" ? "⌘V" : "Ctrl+V"
+            enabled: root.controller.canPaste
+            onTriggered: root.controller.pasteItems()
+        }
+        AppMenuSeparator {}
+        AppMenuItem {
+            text: qsTr("New folder…")
+            shortcutText: Qt.platform.os === "osx" ? "⇧⌘N" : "Ctrl+Shift+N"
+            onTriggered: newFolderDialog.open()
+        }
+        AppMenuSeparator {}
+        AppMenu {
+            title: qsTr("Sort by")
+            AppMenuItem {
+                objectName: "sortByNameAction"
+                text: (root.controller.sortMode === 0 ? "✓  " : "    ") + qsTr("Name")
+                onTriggered: root.controller.setSortMode(0)
+            }
+            AppMenuItem {
+                objectName: "sortByTypeAction"
+                text: (root.controller.sortMode === 3 ? "✓  " : "    ") + "Type"
+                onTriggered: root.controller.setSortMode(3)
+            }
+            AppMenuItem {
+                objectName: "sortBySizeAction"
+                text: (root.controller.sortMode === 2 ? "✓  " : "    ") + "Size"
+                onTriggered: root.controller.setSortMode(2)
+            }
+            AppMenuItem {
+                objectName: "sortByModifiedAction"
+                text: (root.controller.sortMode === 1 ? "✓  " : "    ") + qsTr("Date modified")
+                onTriggered: root.controller.setSortMode(1)
+            }
+        }
+    }
+
+    AppMenu {
+        id: galleryFileContextMenu
+        objectName: "galleryFileContextMenu"
+        AppMenuItem {
+            text: qsTr("Open full screen")
+            onTriggered: root.controller.activatePath(galleryWorkspace.contextPath)
+        }
+        AppMenuItem {
+            text: qsTr("Compare selected")
+            enabled: root.workspaceController.canCompare
+            onTriggered: root.workspaceController.compareSelected()
+        }
+        AppMenuItem {
+            visible: root.controller.canRestoreSelected
+            text: qsTr("Restore original")
+            onTriggered: root.controller.restoreSelected()
+        }
+        AppMenuSeparator {}
+        AppMenuItem {
+            text: qsTr("Cut")
+            shortcutText: Qt.platform.os === "osx" ? "⌘X" : "Ctrl+X"
+            onTriggered: root.controller.copySelected(true)
+        }
+        AppMenuItem {
+            text: qsTr("Copy")
+            shortcutText: Qt.platform.os === "osx" ? "⌘C" : "Ctrl+C"
+            onTriggered: root.controller.copySelected(false)
+        }
+        AppMenuItem {
+            text: qsTr("Rename…")
+            enabled: root.controller.selectionCount === 1
+            onTriggered: root.controller.renameSelected()
+        }
+        AppMenuItem {
+            text: qsTr("Move to Trash")
+            destructive: true
+            onTriggered: root.controller.moveSelectedToTrash()
+        }
+        AppMenuSeparator {}
+        AppMenuItem {
+            text: (Qt.platform.os === "osx" ? qsTr("Reveal in Finder") : qsTr("Show in File Explorer"))
+            enabled: root.controller.selectionCount === 1
+            onTriggered: root.controller.revealSelected()
+        }
+        AppMenuItem {
+            text: qsTr("Properties")
+            enabled: root.controller.selectionCount === 1
+            onTriggered: root.controller.showSelectedProperties()
+        }
+    }
+
+    AppMenu {
+        id: galleryRawFileContextMenu
+        objectName: "galleryRawFileContextMenu"
+        AppMenuItem { text: qsTr("Open full screen"); onTriggered: root.controller.activatePath(galleryWorkspace.contextPath) }
+        AppMenuItem { text: qsTr("Compare selected"); enabled: root.workspaceController.canCompare; onTriggered: root.workspaceController.compareSelected() }
+        AppMenuItem { text: qsTr("RAW/YUV parameters…"); enabled: root.controller.canEditRaw; onTriggered: root.controller.editSelectedRawParameters() }
+        AppMenuItem { visible: root.controller.canRestoreSelected; text: qsTr("Restore original"); onTriggered: root.controller.restoreSelected() }
+        AppMenuSeparator {}
+        AppMenuItem { text: qsTr("Cut"); shortcutText: Qt.platform.os === "osx" ? "⌘X" : "Ctrl+X"; onTriggered: root.controller.copySelected(true) }
+        AppMenuItem { text: qsTr("Copy"); shortcutText: Qt.platform.os === "osx" ? "⌘C" : "Ctrl+C"; onTriggered: root.controller.copySelected(false) }
+        AppMenuItem { text: qsTr("Rename…"); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.renameSelected() }
+        AppMenuItem { text: qsTr("Move to Trash"); destructive: true; onTriggered: root.controller.moveSelectedToTrash() }
+        AppMenuSeparator {}
+        AppMenuItem { text: (Qt.platform.os === "osx" ? qsTr("Reveal in Finder") : qsTr("Show in File Explorer")); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.revealSelected() }
+        AppMenuItem { text: qsTr("Properties"); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.showSelectedProperties() }
+    }
+
+    // Separate folder/file menus avoid invisible menu rows reserving vertical space.
+    AppMenu {
+        id: galleryFolderContextMenu
+        objectName: "galleryFolderContextMenu"
+        AppMenuItem {
+            text: qsTr("Open folder")
+            onTriggered: root.controller.activatePath(galleryWorkspace.contextPath)
+        }
+        AppMenuItem {
+            text: qsTr("Paste into folder")
+            enabled: root.controller.canPaste
+            onTriggered: root.controller.pasteItemsInto(galleryWorkspace.contextPath)
+        }
+        AppMenuSeparator {}
+        AppMenuItem {
+            text: qsTr("Cut")
+            shortcutText: Qt.platform.os === "osx" ? "⌘X" : "Ctrl+X"
+            onTriggered: root.controller.copySelected(true)
+        }
+        AppMenuItem {
+            text: qsTr("Copy")
+            shortcutText: Qt.platform.os === "osx" ? "⌘C" : "Ctrl+C"
+            onTriggered: root.controller.copySelected(false)
+        }
+        AppMenuItem {
+            text: qsTr("Rename…")
+            enabled: root.controller.selectionCount === 1
+            onTriggered: root.controller.renameSelected()
+        }
+        AppMenuItem {
+            text: qsTr("Move to Trash")
+            destructive: true
+            onTriggered: root.controller.moveSelectedToTrash()
+        }
+        AppMenuSeparator {}
+        AppMenuItem {
+            text: (Qt.platform.os === "osx" ? qsTr("Reveal in Finder") : qsTr("Show in File Explorer"))
+            enabled: root.controller.selectionCount === 1
+            onTriggered: root.controller.revealSelected()
+        }
+        AppMenuItem {
+            text: qsTr("Properties")
+            enabled: root.controller.selectionCount === 1
+            onTriggered: root.controller.showSelectedProperties()
+        }
+    }
+
+    PlatformDialogs.FolderDialog {
+        id: folderPicker
+        title: qsTr("Open folder")
+        onAccepted: root.controller.openDirectoryUrl(selectedFolder)
+    }
+
+    AppTextInputDialog {
+        id: newFolderDialog
+        objectName: "newFolderDialog"
+        parent: root
+        dialogTitle: qsTr("New folder")
+        description: qsTr("Create a folder in ") + root.controller.currentFolderName
+        initialText: qsTr("New folder")
+        acceptText: qsTr("Create")
+        onSubmitted: function(text) {
+            complete(root.controller.createFolder(text))
+        }
+    }
+
+    AppTextInputDialog {
+        id: renameDialog
+        objectName: "renameDialog"
+        parent: root
+        dialogTitle: qsTr("Rename item")
+        description: qsTr("Enter a new name for the selected item")
+        acceptText: qsTr("Rename")
+        onSubmitted: function(text) {
+            complete(root.controller.renameSelectedTo(text))
+        }
+    }
+
+    AppConfirmDialog {
+        id: directoryErrorDialog
+        objectName: "directoryErrorDialog"
+        parent: root
+    }
+
+    AppConfirmDialog {
+        id: trashDialog
+        objectName: "trashConfirmationDialog"
+        parent: root
+        dialogTitle: qsTr("Move to Trash?")
+        confirmText: qsTr("Move")
+        destructive: true
+        onConfirmed: {
+            complete(root.controller.moveSelectedToTrashConfirmed())
+        }
+    }
+
+    AppConfirmDialog {
+        id: transferDialog
+        objectName: "transferConfirmationDialog"
+        parent: root
+        property bool transferPending: false
+        destructive: false
+        onConfirmed: {
+            transferPending = false
+            root.workspaceController.confirmPendingTransfer()
+            complete("")
+        }
+        onClosed: {
+            if (transferPending) {
+                transferPending = false
+                root.workspaceController.cancelPendingTransfer()
+            }
+        }
+    }
+
+    Item {
+        id: inspectorArea
+        anchors.right: parent.right
+        anchors.top: toolbar.bottom
+        anchors.bottom: statusRail.top
+        width: root.effectiveInspectorWidth
+        ImagePropertiesPanel {
+            id: propertiesPanel
+            anchors.fill: parent
+            visible: root.propertiesVisible
+            inspectionActive: visible && root.visible
+            browseController: root.controller
+            hasActivePane: root.workspaceController.hasActivePane === undefined || root.workspaceController.hasActivePane
+            controller: root.propertiesController
+            iconPrefix: root.iconPrefix
+            enabled: !root.externalModalVisible
+            onCloseRequested: root.closeInspector()
+        }
+        RawParametersPanel {
+            id: rawParametersPanel
+            anchors.fill: parent
+            visible: root.rawParametersVisible
+            inspectionActive: visible && root.visible
+            browseController: root.controller
+            hasActivePane: root.workspaceController.hasActivePane === undefined || root.workspaceController.hasActivePane
+            controller: root.rawController
+            modalParent: root
+            iconPrefix: root.iconPrefix
+            enabled: !root.externalModalVisible
+            onCloseRequested: root.closeInspector()
+        }
+    }
+    Rectangle {
+        id: inspectorResizeHandle
+        objectName: "inspectorResizeHandle"
+        anchors.right: inspectorArea.left
+        anchors.top: toolbar.bottom
+        anchors.bottom: statusRail.top
+        width: root.inspectorVisible ? 1 : 0
+        color: inspectorResizeMouse.containsMouse || inspectorResizeMouse.pressed ? Theme.probeBlue : Theme.opticalGray
+        z: 25
+        MouseArea {
+            id: inspectorResizeMouse
+            anchors.centerIn: parent
+            width: 9; height: parent.height
+            enabled: root.inspectorVisible && !root.externalModalVisible
+            hoverEnabled: true
+            cursorShape: Qt.SizeHorCursor
+            property real startX: 0
+            property real startWidth: 360
+            onPressed: function(mouse) {
+                startX = mapToItem(root, mouse.x, mouse.y).x
+                startWidth = root.effectiveInspectorWidth
+            }
+            onPositionChanged: function(mouse) {
+                if (!pressed) return
+                root.inspectorWidth = Math.max(320, Math.min(root.inspectorMaximumWidth,
+                    startWidth + startX - mapToItem(root, mouse.x, mouse.y).x))
+            }
+        }
+    }
+
+    Connections {
+        target: root.controller
+        ignoreUnknownSignals: true
+
+        function onDirectorySelectionRequested(initialFolder) {
+            folderPicker.currentFolder = initialFolder
+            folderPicker.open()
+        }
+
+        function onRenameRequested(currentName) {
+            renameDialog.openWith(currentName)
+        }
+
+        function onTrashConfirmationRequested(itemCount) {
+            if (root.settingsController && !root.settingsController.confirmTrash) {
+                const error = root.controller.moveSelectedToTrashConfirmed()
+                if (error.length > 0) {
+                    trashDialog.showConfirmation()
+                    trashDialog.complete(error)
+                }
+                return
+            }
+            trashDialog.message = itemCount === 1
+                    ? qsTr("The selected item will be moved to the system Trash.")
+                    : qsTr("%1 selected items will be moved to the system Trash.").arg(itemCount)
+            trashDialog.showConfirmation()
+        }
+
+        function onPropertiesRequested(path) {
+            root.showProperties()
+        }
+
+        function onFullScreenRequested(paths, initialIndex) {
+            root.fullScreenRequested(paths, initialIndex)
+        }
+
+        function onRawParametersRequested(path) {
+            root.showRawParameters()
+        }
+    }
+
+    Connections {
+        target: root.workspaceController
+        ignoreUnknownSignals: true
+
+        function onDirectoryOpenFailed(path, message) {
+            directoryErrorDialog.showConfirmation()
+            directoryErrorDialog.complete(message)
+        }
+
+        function onTransferConfirmationRequested(move, itemCount, targetDirectory) {
+            transferDialog.dialogTitle = move ? qsTr("Move items?") : qsTr("Copy items?")
+            transferDialog.confirmText = move ? qsTr("Move") : qsTr("Copy")
+            const target = String(targetDirectory)
+            if (itemCount === 1) {
+                transferDialog.message = move
+                        ? qsTr("Move 1 item to “%1”?").arg(target)
+                        : qsTr("Copy 1 item to “%1”?").arg(target)
+            } else {
+                transferDialog.message = move
+                        ? qsTr("Move %1 items to “%2”?").arg(itemCount).arg(target)
+                        : qsTr("Copy %1 items to “%2”?").arg(itemCount).arg(target)
+            }
+            transferDialog.transferPending = true
+            transferDialog.showConfirmation()
+        }
+    }
+
+    Shortcut {
+        sequence: "F"
+        enabled: root.fileShortcutsEnabled && galleryWorkspace.visible &&
+                 galleryWorkspace.currentPreviewPath.length > 0
+        onActivated: galleryWorkspace.fitImage()
+    }
+    Shortcut {
+        sequence: "1"
+        enabled: root.fileShortcutsEnabled && galleryWorkspace.visible &&
+                 galleryWorkspace.currentPreviewPath.length > 0
+        onActivated: galleryWorkspace.showActualPixels()
+    }
+    Shortcut {
+        sequence: root.configuredShortcut("openFolder", "Ctrl+O")
+        enabled: root.contentInteractionEnabled && !shortcutContext.textInputFocused
+        onActivated: root.controller.chooseDirectory()
+    }
+    Shortcut {
+        sequence: root.configuredShortcut("find", "Ctrl+F")
+        enabled: root.contentInteractionEnabled
+        onActivated: {
+            const header = root.activePaneHeader()
+            if (header) header.focusSearch()
+        }
+    }
+    Shortcut {
+        sequences: [StandardKey.Copy]
+        enabled: root.fileShortcutsEnabled
+        onActivated: root.controller.copySelected(false)
+    }
+    Shortcut {
+        sequences: [StandardKey.Cut]
+        enabled: root.fileShortcutsEnabled
+        onActivated: root.controller.copySelected(true)
+    }
+    Shortcut {
+        sequences: [StandardKey.Paste]
+        enabled: root.fileShortcutsEnabled
+        onActivated: root.controller.pasteItems()
+    }
+    Shortcut {
+        sequence: root.configuredShortcut("toggleNavigator", "Ctrl+B")
+        enabled: root.contentInteractionEnabled && !shortcutContext.textInputFocused
+        onActivated: root.navigatorVisible = !root.navigatorVisible
+    }
+    Shortcut {
+        sequence: root.configuredShortcut("rename", "F2")
+        enabled: root.fileShortcutsEnabled
+        onActivated: root.controller.renameSelected()
+    }
+    Shortcut {
+        sequence: root.configuredShortcut("compare", "C")
+        enabled: root.fileShortcutsEnabled && root.workspaceController.canCompare
+        onActivated: root.workspaceController.compareSelected()
+    }
+    Shortcut {
+        sequence: "Delete"
+        enabled: root.fileShortcutsEnabled && root.controller.selectionCount > 0
+        onActivated: root.controller.moveSelectedToTrash()
+    }
+    Shortcut {
+        sequences: [StandardKey.SelectAll]
+        enabled: root.fileShortcutsEnabled
+        onActivated: root.controller.selectAll()
+    }
+    Shortcut {
+        sequence: root.configuredShortcut("newFolder", "Ctrl+Shift+N")
+        enabled: root.fileShortcutsEnabled
+        onActivated: newFolderDialog.open()
+    }
+    Shortcut {
+        sequences: [StandardKey.Back]
+        enabled: root.fileShortcutsEnabled && root.controller.canGoBack
+        onActivated: root.controller.navigateBack()
+    }
+    Shortcut {
+        sequences: [StandardKey.Forward]
+        enabled: root.fileShortcutsEnabled && root.controller.canGoForward
+        onActivated: root.controller.navigateForward()
+    }
+    Shortcut {
+        sequence: "Alt+Up"
+        enabled: root.fileShortcutsEnabled && root.controller.canGoUp
+        onActivated: root.controller.navigateUp()
+    }
+    Shortcut {
+        sequence: "Alt+Return"
+        enabled: root.fileShortcutsEnabled && root.controller.selectionCount === 1
+        onActivated: root.controller.showSelectedProperties()
+    }
+    Shortcut {
+        sequences: [StandardKey.Refresh]
+        enabled: root.fileShortcutsEnabled
+        onActivated: root.controller.refresh()
+    }
+    Shortcut {
+        sequence: "Return"
+        enabled: root.fileShortcutsEnabled && root.controller.selectionCount === 1
+        onActivated: root.controller.activatePath(root.controller.selectedPaths[0])
+    }
+    Shortcut {
+        sequence: "Backspace"
+        enabled: Qt.platform.os === "osx" && root.fileShortcutsEnabled &&
+                 root.controller.selectionCount > 0
+        onActivated: root.controller.moveSelectedToTrash()
+    }
+}

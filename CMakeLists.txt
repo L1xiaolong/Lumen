@@ -1,0 +1,105 @@
+cmake_minimum_required(VERSION 3.25)
+
+project(Lumen VERSION 0.2.21 LANGUAGES CXX)
+enable_language(C)
+
+option(MVPVIEW_ENABLE_LCMS2 "Enable embedded ICC conversion with LittleCMS when available" ON)
+option(MVPVIEW_ENABLE_CRASHPAD "Enable macOS Crashpad crash capture when the pinned build succeeds" ON)
+set(MVPVIEW_GITHUB_REPOSITORY "L1xiaolong/Lumen" CACHE STRING
+    "GitHub owner/repository used for update checks and project links")
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+find_package(LibRaw 0.21 REQUIRED)
+find_package(exiv2 CONFIG REQUIRED)
+if(DEFINED exiv2_VERSION AND exiv2_VERSION VERSION_LESS 0.28)
+    message(FATAL_ERROR "Exiv2 0.28 or newer is required (found ${exiv2_VERSION})")
+endif()
+if(NOT TARGET Exiv2::exiv2lib)
+    message(FATAL_ERROR "Exiv2 was found but Exiv2::exiv2lib is unavailable")
+endif()
+set(MVPVIEW_HAS_LIBRAW ON)
+set(MVPVIEW_HAS_EXIV2 ON)
+if(APPLE)
+    # LibRaw installations using @rpath must also run in the build tree.
+    list(APPEND CMAKE_BUILD_RPATH "${LibRaw_LIBRARY_DIR}")
+    if(NOT CMAKE_CROSSCOMPILING)
+        include(CheckCXXSourceRuns)
+        set(CMAKE_REQUIRED_INCLUDES "${LibRaw_INCLUDE_DIR}/libraw")
+        set(CMAKE_REQUIRED_LIBRARIES "${LibRaw_LIBRARY}")
+        check_cxx_source_runs(
+            "#include <libraw.h>\nint main() { return libraw_version() ? 0 : 1; }"
+            MVPVIEW_LIBRAW_RUNTIME_WORKS
+        )
+        unset(CMAKE_REQUIRED_INCLUDES)
+        unset(CMAKE_REQUIRED_LIBRARIES)
+        if(NOT MVPVIEW_LIBRAW_RUNTIME_WORKS)
+            message(FATAL_ERROR "LibRaw was found but its runtime dependencies are unusable")
+        endif()
+    endif()
+endif()
+message(STATUS "Camera RAW support: LibRaw ${LibRaw_VERSION}")
+message(STATUS "Image metadata support: Exiv2 ${exiv2_VERSION}")
+
+set(MVPVIEW_HAS_LCMS2 OFF)
+if(MVPVIEW_ENABLE_LCMS2)
+    find_package(LCMS2 QUIET)
+    if(LCMS2_FOUND)
+        set(MVPVIEW_HAS_LCMS2 ON)
+        message(STATUS "Embedded ICC color management: LittleCMS ${LCMS2_VERSION}")
+    else()
+        message(STATUS "Embedded ICC color management disabled: LittleCMS was not found")
+    endif()
+endif()
+
+# macOS Crashpad is built by its own GN pipeline (cmake/Crashpad.cmake) when the diagnostics
+# target is configured. Switching it off keeps the rest of the feature intact: the service
+# reports crash capture as unavailable instead of failing the configuration.
+set(MVPVIEW_HAS_CRASHPAD OFF)
+if(APPLE AND MVPVIEW_ENABLE_CRASHPAD)
+    set(MVPVIEW_HAS_CRASHPAD ON)
+    message(STATUS "Crash capture: Crashpad (macOS)")
+elseif(APPLE)
+    message(STATUS "Crash capture disabled: macOS Crashpad is switched off")
+endif()
+
+# Qt 6.9 is the validated baseline. The QML module policies used below (QTP0004, Qt 6.8+), the
+# QQuickRhiItem compositing behaviour the canvas relies on, and the Qt6::GuiPrivate dependency
+# all require a matched Qt build, so the minimum and the packaged runtime must not diverge.
+find_package(Qt6 6.9 REQUIRED COMPONENTS
+    Core Gui Network Quick QuickControls2 QuickLayouts QuickTemplates2 Svg ShaderTools LinguistTools
+)
+find_package(Qt6GuiPrivate 6.9 CONFIG REQUIRED)
+
+# The production QML renderer uses Qt's QRhi API.  Keep this check close to
+# dependency discovery so an incomplete Qt SDK fails during configuration with
+# an actionable error instead of much later while compiling qml_image_canvas.
+if(NOT TARGET Qt6::GuiPrivate)
+    message(FATAL_ERROR
+        "Qt6::GuiPrivate is required by the QML RHI renderer. Install the "
+        "private QtGui development headers for the selected Qt SDK.")
+endif()
+
+# macOS 26 keeps the legacy AGL framework directory but removes its binary. Qt 6.9's
+# WrapOpenGL probe sees the directory and adds an unusable link flag even though this app uses
+# Metal. Keep OpenGL (required by QtGui's interface) while dropping only the missing AGL link.
+if(APPLE AND TARGET WrapOpenGL::WrapOpenGL
+   AND NOT EXISTS "/System/Library/Frameworks/AGL.framework/Versions/A/AGL")
+    set_property(TARGET WrapOpenGL::WrapOpenGL PROPERTY
+        INTERFACE_LINK_LIBRARIES "-framework OpenGL")
+endif()
+
+qt_standard_project_setup()
+include(cmake/Warnings.cmake)
+
+execute_process(COMMAND git rev-parse --short=12 HEAD WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    OUTPUT_VARIABLE MVPVIEW_BUILD_ID OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT MVPVIEW_BUILD_ID)
+    set(MVPVIEW_BUILD_ID "source-archive")
+endif()
+add_subdirectory(third_party/miniz)
+add_subdirectory(src)

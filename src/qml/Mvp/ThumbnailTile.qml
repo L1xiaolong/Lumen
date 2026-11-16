@@ -1,0 +1,559 @@
+pragma ComponentBehavior: Bound
+// qmllint disable unqualified
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import "."
+
+Item {
+    id: root
+    required property var controller
+    property var workspaceController: controller
+    property var settingsController: null
+    property bool contentInteractionEnabled: true
+    readonly property alias dragHandler: tileDragHandler
+    property string path
+    property string fileName
+    property string technicalLabel
+    property string fileType
+    property var dimensions
+    property int bitDepth: 0
+    property string fileSizeText
+    property bool requestThumbnail: true
+    property bool componentReady: false
+    property bool visualStarted: false
+    Component.onCompleted: {
+        componentReady = true
+        visualStarted = requestThumbnail
+    }
+    onRequestThumbnailChanged: {
+        if (componentReady && requestThumbnail) visualStarted = true
+    }
+    readonly property bool thumbnailReady: visualLoader.item !== null && visualLoader.item.thumbnailReady
+    property url thumbnailUrl
+    property bool directory: false
+    property bool keyboardCurrent: false
+    readonly property int thumbnailFillMode: settingsController && settingsController.thumbnailPresentation === "fill"
+                                             ? Image.PreserveAspectCrop : Image.PreserveAspectFit
+    property bool selected: false
+    property int selectionOrdinal: 0
+    property int displayMode: 0
+    readonly property string pathToolTipText: pathTip.text
+    readonly property bool pathToolTipVisible: pathTip.visible
+    readonly property int pathToolTipDelay: pathTip.delay
+    readonly property bool pathHoverActive: tileMouse.containsMouse
+    signal activated
+    signal selectionRequested(bool extend, bool toggle)
+
+    component MetadataStrip: Item {
+        id: metadataStrip
+        required property string typeText
+        required property var imageDimensions
+        required property int sourceBitDepth
+        required property string sizeText
+        required property bool directory
+        property string labelObjectName
+        property string badgeObjectName
+
+        readonly property string normalizedType: typeText.toUpperCase()
+        readonly property bool yuvType: normalizedType === "YUV"
+        readonly property bool rawType: normalizedType === "RAW" || normalizedType === "DNG" ||
+                                        normalizedType === "CR2" || normalizedType === "CR3" ||
+                                        normalizedType === "NEF" || normalizedType === "NRW" ||
+                                        normalizedType === "ARW" || normalizedType === "SR2" ||
+                                        normalizedType === "SRF" || normalizedType === "RAF" ||
+                                        normalizedType === "ORF" || normalizedType === "ORW" ||
+                                        normalizedType === "RW2" || normalizedType === "PEF" ||
+                                        normalizedType === "IIQ" || normalizedType === "3FR" ||
+                                        normalizedType === "ERF" || normalizedType === "MEF" ||
+                                        normalizedType === "MOS" || normalizedType === "MRW" ||
+                                        normalizedType === "X3F"
+        readonly property color badgeSurface: yuvType ? Theme.yuvBadgeSurface
+                                                     : rawType ? Theme.rawBadgeSurface
+                                                               : Theme.encodedBadgeSurface
+        readonly property color badgeBorder: yuvType ? Theme.yuvBadgeBorder
+                                                    : rawType ? Theme.rawBadgeBorder
+                                                              : Theme.encodedBadgeBorder
+        readonly property color badgeInk: yuvType ? Theme.yuvBadgeText
+                                                 : rawType ? Theme.rawBadgeText
+                                                           : Theme.encodedBadgeText
+        readonly property string dimensionText:
+            imageDimensions && imageDimensions.width > 0 && imageDimensions.height > 0
+                ? imageDimensions.width + "×" + imageDimensions.height
+                : qsTr("Reading size…")
+        readonly property string depthText: sourceBitDepth > 0
+                                                ? sourceBitDepth + " bit"
+                                                : qsTr("Reading…")
+
+        height: 18
+
+        RowLayout {
+            anchors.fill: parent
+            spacing: 8
+
+            Rectangle {
+                id: typeBadge
+                objectName: metadataStrip.badgeObjectName
+                visible: !metadataStrip.directory
+                Layout.preferredWidth: typeLabel.implicitWidth
+                Layout.preferredHeight: 17
+                radius: 4
+                color: "transparent"
+                border.width: 0
+
+                Text {
+                    id: typeLabel
+                    anchors.centerIn: parent
+                    text: metadataStrip.normalizedType
+                    color: root.selected ? Theme.selectionMutedInk : Theme.mutedInk
+                    font.family: Theme.uiFont
+                    font.pixelSize: Theme.metadataFontSize
+                    font.weight: Theme.bodyFontWeight
+                }
+            }
+
+            Text {
+                id: technicalText
+                objectName: metadataStrip.labelObjectName
+                Layout.fillWidth: true
+                text: metadataStrip.directory
+                      ? qsTr("Folder")
+                      : metadataStrip.dimensionText + " · " +
+                        metadataStrip.depthText + " · " + metadataStrip.sizeText
+                elide: Text.ElideRight
+                color: root.selected ? Theme.selectionMutedInk : Theme.mutedInk
+                font.family: Theme.uiFont
+                font.pixelSize: Theme.metadataFontSize
+            }
+        }
+    }
+
+    Drag.active: tileDragHandler.active && root.selected
+    Drag.dragType: Drag.Automatic
+    Drag.supportedActions: Qt.CopyAction
+    Drag.mimeData: ({ "text/uri-list": root.controller.selectedUriList })
+    Drag.imageSource: tileDragHandler.active && root.requestThumbnail ? root.thumbnailUrl : ""
+    Drag.hotSpot.x: Math.min(root.width / 2, 80)
+    Drag.hotSpot.y: Math.min(root.height / 2, 60)
+
+    width: GridView.view ? GridView.view.cellWidth - 16 : 160
+    height: displayMode === 1 ? 68 : width * 0.75 + (displayMode === 2 ? 36 : 48)
+
+    PathToolTip {
+        id: pathTip
+        objectName: "thumbnailPathToolTip"
+        parent: root
+        path: root.path
+        fileName: root.fileName || path.split(/[\\/]/).pop() || path
+        visible: tileMouse.containsMouse && !tileDragHandler.active && root.path.length > 0
+    }
+
+    Loader {
+        id: visualLoader
+        asynchronous: true
+        anchors.fill: parent
+        // Cache-buffer cells keep geometry without incubating all their text and
+        // layout items. Once requested, retain the visual across delegate reuse.
+        active: root.visualStarted || root.directory
+        sourceComponent: root.displayMode === 1 ? listVisual : gridVisual
+    }
+
+    Component {
+        id: gridVisual
+        Item {
+            readonly property bool thumbnailReady: gridPreview.status === Image.Ready
+            Rectangle {
+                anchors.fill: parent
+                color: root.selected ? Theme.fileSelectionSurface : tileMouse.containsMouse ? Theme.paperWhite : "transparent"
+                radius: Theme.radius
+                border.width: 1
+                border.color: root.selected ? Theme.fileSelectionBorder : "transparent"
+            }
+            Rectangle {
+                id: imageWell
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                anchors.topMargin: 6
+                height: Math.round(width * 0.75)
+                color: Theme.thumbnailWell
+                border.color: Theme.opticalGray
+                border.width: 0
+                clip: true
+                Image {
+                    id: gridPreview
+                    objectName: "gridImagePreview"
+                    anchors.fill: parent
+                    // Keep both URL and requested size stable while the GridView moves. Changing
+                    // either one cancels the current async response and briefly clears the texture,
+                    // which appears as periodic flashing during a long scroll.
+                    source: root.requestThumbnail && !root.directory ? root.thumbnailUrl : ""
+                    visible: !root.directory
+                    asynchronous: true
+                    cache: true
+                    sourceSize: Qt.size(384, 384)
+                    fillMode: root.thumbnailFillMode
+                    smooth: !root.settingsController || root.settingsController.smoothDisplay
+                    mipmap: !root.settingsController || root.settingsController.smoothDisplay
+                }
+                Image {
+                    id: gridFolderIcon
+                    objectName: "gridFolderIcon"
+                    anchors.centerIn: parent
+                    width: Math.round(Math.min(imageWell.width, imageWell.height) * 0.58)
+                    height: width
+                    source: root.directory ? root.thumbnailUrl : ""
+                    visible: root.directory
+                    asynchronous: true
+                    cache: true
+                    sourceSize: Qt.size(192, 192)
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                    mipmap: true
+                }
+            }
+            Text {
+                id: gridName
+                objectName: "gridFileName"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: imageWell.bottom
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                anchors.topMargin: 6
+                text: root.fileName
+                elide: Text.ElideMiddle
+                color: Theme.graphiteInk
+                font.family: Theme.uiFont
+                font.pixelSize: Theme.bodyFontSize
+                font.weight: Theme.bodyFontWeight
+            }
+            MetadataStrip {
+                visible: root.displayMode !== 2
+                anchors.left: gridName.left
+                anchors.right: gridName.right
+                anchors.top: gridName.bottom
+                anchors.topMargin: 3
+                typeText: root.fileType
+                imageDimensions: root.dimensions
+                sourceBitDepth: root.bitDepth
+                sizeText: root.fileSizeText
+                directory: root.directory
+                labelObjectName: "gridTechnicalLabel"
+                badgeObjectName: "gridTypeBadge"
+            }
+        }
+    }
+
+    Component {
+        id: listVisual
+        Item {
+            readonly property bool thumbnailReady: listPreview.status === Image.Ready
+            Rectangle {
+                anchors.fill: parent
+                color: root.selected ? Theme.fileSelectionSurface : tileMouse.containsMouse ? Theme.paperWhite : "transparent"
+                radius: Theme.radius
+                border.width: 1
+                border.color: root.selected ? Theme.fileSelectionBorder : "transparent"
+            }
+            Rectangle {
+                id: listImageWell
+                anchors.left: parent.left
+                anchors.leftMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                width: 72
+                height: 52
+                color: Theme.thumbnailWell
+                border.color: Theme.opticalGray
+                border.width: 0
+                clip: true
+                Image {
+                    id: listPreview
+                    objectName: "listImagePreview"
+                    anchors.fill: parent
+                    source: root.requestThumbnail && !root.directory ? root.thumbnailUrl : ""
+                    visible: !root.directory
+                    asynchronous: true
+                    cache: true
+                    sourceSize: Qt.size(256, 256)
+                    fillMode: root.thumbnailFillMode
+                    smooth: !root.settingsController || root.settingsController.smoothDisplay
+                    mipmap: !root.settingsController || root.settingsController.smoothDisplay
+                }
+                Image {
+                    id: listFolderIcon
+                    objectName: "listFolderIcon"
+                    anchors.centerIn: parent
+                    width: 36
+                    height: 36
+                    source: root.directory ? root.thumbnailUrl : ""
+                    visible: root.directory
+                    asynchronous: true
+                    cache: true
+                    sourceSize: Qt.size(128, 128)
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                    mipmap: true
+                }
+            }
+            Text {
+                id: listName
+                anchors.left: listImageWell.right
+                anchors.leftMargin: 14
+                anchors.right: parent.right
+                anchors.rightMargin: 16
+                anchors.top: parent.top
+                anchors.topMargin: 15
+                text: root.fileName
+                elide: Text.ElideMiddle
+                color: Theme.graphiteInk
+                font.family: Theme.uiFont
+                font.pixelSize: 13
+                font.weight: Font.Normal
+            }
+            MetadataStrip {
+                anchors.left: listName.left
+                anchors.right: listName.right
+                anchors.top: listName.bottom
+                anchors.topMargin: 2
+                typeText: root.fileType
+                imageDimensions: root.dimensions
+                sourceBitDepth: root.bitDepth
+                sizeText: root.fileSizeText
+                directory: root.directory
+                labelObjectName: "listTechnicalLabel"
+                badgeObjectName: "listTypeBadge"
+            }
+        }
+    }
+
+    Rectangle {
+        objectName: "thumbnailKeyboardFocus"
+        visible: root.keyboardCurrent
+        anchors.fill: parent
+        anchors.margins: 1
+        radius: Theme.radius
+        color: "transparent"
+        border.width: 2
+        border.color: Theme.keyboardFocus
+    }
+
+    Rectangle {
+        visible: root.selected
+        x: root.displayMode === 1 ? 12 : 14
+        y: root.displayMode === 1 ? 10 : 14
+        width: 18
+        height: 18
+        radius: 9
+        color: Theme.fileSelectionBadge
+        Text {
+            anchors.centerIn: parent
+            text: root.selectionOrdinal > 0 ? root.selectionOrdinal : "✓"
+            color: Theme.primaryButtonText
+            font.family: Theme.monoFont
+            font.pixelSize: 10
+            font.weight: Font.Medium
+        }
+    }
+
+    DropArea {
+        id: folderDropArea
+        anchors.fill: parent
+        enabled: root.directory
+        onEntered: function(drag) {
+            if (drag.hasUrls)
+                drag.acceptProposedAction()
+        }
+        onDropped: function(drop) {
+            if (!drop.hasUrls)
+                return
+            root.controller.copyDroppedUrlsInto(drop.urls, root.path)
+            drop.acceptProposedAction()
+        }
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: 3
+            visible: folderDropArea.containsDrag
+            radius: Theme.radius
+            color: "#197893A6"
+            border.color: Theme.primaryButton
+            border.width: 2
+        }
+    }
+
+    MouseArea {
+        id: tileMouse
+        objectName: "thumbnailMouseArea"
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        hoverEnabled: true
+        onClicked: function (mouse) {
+            if (mouse.button === Qt.RightButton) {
+                if (!root.selected)
+                    root.selectionRequested(false, false);
+                root.popupContextMenu();
+                return;
+            }
+            const toggle = (mouse.modifiers & Qt.ControlModifier) || (mouse.modifiers & Qt.MetaModifier);
+            const extend = (mouse.modifiers & Qt.ShiftModifier);
+            root.selectionRequested(extend, toggle);
+        }
+        onDoubleClicked: root.activated()
+    }
+
+    DragHandler {
+        id: tileDragHandler
+        acceptedButtons: Qt.LeftButton
+        target: null
+        enabled: root.contentInteractionEnabled && root.path.length > 0 &&
+                 (!contextMenuLoader.item || !contextMenuLoader.item.visible)
+        onActiveChanged: {
+            if (active && !root.selected)
+                root.selectionRequested(false, false);
+        }
+    }
+
+    property bool contextPopupPending: false
+    function popupContextMenu() {
+        contextPopupPending = true
+        contextMenuLoader.active = true
+        if (contextPopupPending && contextMenuLoader.status === Loader.Ready) {
+            contextPopupPending = false
+            contextMenuLoader.item.popup()
+        }
+    }
+    function closeContextMenu() {
+        contextPopupPending = false
+        if (contextMenuLoader.item) contextMenuLoader.item.close()
+    }
+    onPathChanged: closeContextMenu()
+    onDirectoryChanged: closeContextMenu()
+    onVisibleChanged: {
+        if (!visible) closeContextMenu()
+    }
+    Loader {
+        id: contextMenuLoader
+        objectName: "thumbnailContextMenuLoader"
+        active: false
+        sourceComponent: root.directory ? folderMenuComponent
+                         : root.path.toLowerCase().endsWith(".raw") ||
+                           root.path.toLowerCase().endsWith(".yuv") ? rawMenuComponent
+                         : imageMenuComponent
+        onLoaded: {
+            if (root.contextPopupPending) {
+                root.contextPopupPending = false
+                item.popup()
+            }
+        }
+    }
+
+    Component {
+        id: imageMenuComponent
+        AppMenu {
+            id: imageContextMenu
+            parent: root
+            objectName: "imageContextMenu"
+            AppMenuItem {
+                text: qsTr("Open full screen")
+                onTriggered: root.activated()
+            }
+            AppMenuItem {
+                text: qsTr("Compare selected")
+                enabled: root.workspaceController.canCompare
+                onTriggered: root.workspaceController.compareSelected()
+            }
+            AppMenuItem {
+                visible: root.controller.canRestoreSelected
+                text: qsTr("Restore original")
+                onTriggered: root.controller.restoreSelected()
+            }
+            AppMenuSeparator {}
+            AppMenuItem {
+                text: qsTr("Cut")
+                shortcutText: Qt.platform.os === "osx" ? "⌘X" : "Ctrl+X"
+                onTriggered: root.controller.copySelected(true)
+            }
+            AppMenuItem {
+                text: qsTr("Copy")
+                shortcutText: Qt.platform.os === "osx" ? "⌘C" : "Ctrl+C"
+                onTriggered: root.controller.copySelected(false)
+            }
+            AppMenuItem {
+                text: qsTr("Rename…")
+                enabled: root.controller.selectionCount === 1
+                onTriggered: root.controller.renameSelected()
+            }
+            AppMenuItem {
+                text: qsTr("Move to Trash")
+                destructive: true
+                onTriggered: root.controller.moveSelectedToTrash()
+            }
+            AppMenuSeparator {}
+            AppMenuItem {
+                text: (Qt.platform.os === "osx" ? qsTr("Reveal in Finder") : qsTr("Show in File Explorer"))
+                enabled: root.controller.selectionCount === 1
+                onTriggered: root.controller.revealSelected()
+            }
+            AppMenuItem {
+                text: qsTr("Properties")
+                enabled: root.controller.selectionCount === 1
+                onTriggered: root.controller.showSelectedProperties()
+            }
+        }
+    }
+
+    Component {
+        id: rawMenuComponent
+        AppMenu {
+            id: rawContextMenu
+            parent: root
+            objectName: "rawContextMenu"
+            AppMenuItem { text: qsTr("Open full screen"); onTriggered: root.activated() }
+            AppMenuItem {
+                text: qsTr("Compare selected")
+                enabled: root.workspaceController.canCompare
+                onTriggered: root.workspaceController.compareSelected()
+            }
+            AppMenuItem {
+                text: qsTr("RAW/YUV parameters…")
+                enabled: root.controller.canEditRaw
+                onTriggered: root.controller.editSelectedRawParameters()
+            }
+            AppMenuItem {
+                visible: root.controller.canRestoreSelected
+                text: qsTr("Restore original")
+                onTriggered: root.controller.restoreSelected()
+            }
+            AppMenuSeparator {}
+            AppMenuItem { text: qsTr("Cut"); shortcutText: Qt.platform.os === "osx" ? "⌘X" : "Ctrl+X"; onTriggered: root.controller.copySelected(true) }
+            AppMenuItem { text: qsTr("Copy"); shortcutText: Qt.platform.os === "osx" ? "⌘C" : "Ctrl+C"; onTriggered: root.controller.copySelected(false) }
+            AppMenuItem { text: qsTr("Rename…"); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.renameSelected() }
+            AppMenuItem { text: qsTr("Move to Trash"); destructive: true; onTriggered: root.controller.moveSelectedToTrash() }
+            AppMenuSeparator {}
+            AppMenuItem { text: (Qt.platform.os === "osx" ? qsTr("Reveal in Finder") : qsTr("Show in File Explorer")); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.revealSelected() }
+            AppMenuItem { text: qsTr("Properties"); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.showSelectedProperties() }
+        }
+    }
+
+    Component {
+        id: folderMenuComponent
+        AppMenu {
+            id: folderContextMenu
+            parent: root
+            objectName: "folderContextMenu"
+            AppMenuItem { text: qsTr("Open folder"); onTriggered: root.activated() }
+            AppMenuItem { text: qsTr("Paste into folder"); enabled: root.controller.canPaste; onTriggered: root.controller.pasteItemsInto(root.path) }
+            AppMenuSeparator {}
+            AppMenuItem { text: qsTr("Cut"); shortcutText: Qt.platform.os === "osx" ? "⌘X" : "Ctrl+X"; onTriggered: root.controller.copySelected(true) }
+            AppMenuItem { text: qsTr("Copy"); shortcutText: Qt.platform.os === "osx" ? "⌘C" : "Ctrl+C"; onTriggered: root.controller.copySelected(false) }
+            AppMenuItem { text: qsTr("Rename…"); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.renameSelected() }
+            AppMenuItem { text: qsTr("Move to Trash"); destructive: true; onTriggered: root.controller.moveSelectedToTrash() }
+            AppMenuSeparator {}
+            AppMenuItem { text: (Qt.platform.os === "osx" ? qsTr("Reveal in Finder") : qsTr("Show in File Explorer")); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.revealSelected() }
+            AppMenuItem { text: qsTr("Properties"); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.showSelectedProperties() }
+        }
+    }
+
+}

@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  # CI is a reusable release gate. Ordinary pushes and pull requests do not
+  # run it; the Release workflow calls it immediately before packaging.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          - os: macos-15
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jurplel/install-qt-action@v4
+        if: runner.os == 'macOS'
+        with:
+          version: '6.9.0'
+          modules: 'qtshadertools'
+          cache: true
+      - name: Install image libraries (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libraw exiv2 pkgconf
+      - name: Set up MSYS2/UCRT64
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-declarative
+            mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qt6-shadertools
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-libraw
+            mingw-w64-ucrt-x86_64-exiv2
+            mingw-w64-ucrt-x86_64-lcms2
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: >-
+          cmake --preset macos-debug
+          -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+          -DMVPVIEW_GITHUB_REPOSITORY="${GITHUB_REPOSITORY}"
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: cmake --build --preset macos-debug
+      - name: QML static analysis (macOS)
+        if: runner.os == 'macOS'
+        run: cmake --build --preset macos-debug --target LumenQml_qmllint
+      - name: Configure (Windows MSYS2/UCRT64)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        env:
+          MSYS2_UCRT64: C:/msys64/ucrt64
+        run: >-
+          cmake --preset windows-msys2-debug
+          -DMVPVIEW_GITHUB_REPOSITORY="${GITHUB_REPOSITORY}"
+      - name: Build (Windows MSYS2/UCRT64)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: cmake --build --preset windows-msys2-debug
+      - name: QML static analysis (Windows MSYS2/UCRT64)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: cmake --build --preset windows-msys2-debug --target LumenQml_qmllint

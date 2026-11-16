@@ -1,0 +1,39 @@
+module Mvp
+ShortcutContext 1.0 ShortcutContext.qml
+singleton Theme 1.0 Theme.qml
+AppIconButton 1.0 AppIconButton.qml
+AppConfirmDialog 1.0 AppConfirmDialog.qml
+AppMenu 1.0 AppMenu.qml
+AppMenuItem 1.0 AppMenuItem.qml
+AppMenuSeparator 1.0 AppMenuSeparator.qml
+AppTextInputDialog 1.0 AppTextInputDialog.qml
+BrowserPane 1.0 BrowserPane.qml
+CompareLumaHistogram 1.0 CompareLumaHistogram.qml
+FolderNavigator 1.0 FolderNavigator.qml
+ImagePropertiesContent 1.0 ImagePropertiesContent.qml
+ImagePropertiesPanel 1.0 ImagePropertiesPanel.qml
+ImagePropertiesDialog 1.0 ImagePropertiesDialog.qml
+PropertiesHistogram 1.0 PropertiesHistogram.qml
+PropertyFieldList 1.0 PropertyFieldList.qml
+RawNumberField 1.0 RawNumberField.qml
+RawParameterComboBox 1.0 RawParameterComboBox.qml
+RawParametersDialog 1.0 RawParametersDialog.qml
+ProductionCompareCanvas 1.0 ProductionCompareCanvas.qml
+ProductionFullScreenCanvas 1.0 ProductionFullScreenCanvas.qml
+TopToolbar 1.0 TopToolbar.ui.qml
+ThumbnailTile 1.0 ThumbnailTile.qml
+
+ThumbnailViewport 1.0 ThumbnailViewport.qml
+
+SettingsButton 1.0 SettingsButton.qml
+SettingsToggle 1.0 SettingsToggle.qml
+SettingsRow 1.0 SettingsRow.qml
+SettingsHeading 1.0 SettingsHeading.qml
+SettingsNotice 1.0 SettingsNotice.qml
+SettingsComboBox 1.0 SettingsComboBox.qml
+
+InspectorHeader 1.0 InspectorHeader.qml
+InspectorTabs 1.0 InspectorTabs.qml
+RawParameterRow 1.0 RawParameterRow.qml
+RawParametersContent 1.0 RawParametersContent.qml
+RawParametersPanel 1.0 RawParametersPanel.qml

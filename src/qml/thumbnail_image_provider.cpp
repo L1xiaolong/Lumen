@@ -1,0 +1,194 @@
+#include "qml/thumbnail_image_provider.h"
+#include "qml/accounted_texture_factory.h"
+
+#include "core/raw_image_parameters.h"
+#include "io/image_decoder.h"
+#include "io/image_loader.h"
+
+#include <QAbstractFileIconProvider>
+#include <QEventLoop>
+#include <QFileInfo>
+#include <QCoreApplication>
+#include <QMutexLocker>
+#include <QPainter>
+#include <QPointer>
+#include <QQuickTextureFactory>
+#include <QThread>
+#include <QUrl>
+
+namespace mvpview {
+SystemFolderIconProvider::SystemFolderIconProvider()
+    : QQuickImageProvider(QQuickImageProvider::Image,
+                          QQuickImageProvider::ForceAsynchronousImageLoading) {}
+
+SystemFolderIconProvider::~SystemFolderIconProvider() = default;
+
+QImage SystemFolderIconProvider::requestImage(const QString& id, QSize* size,
+                                               const QSize& requestedSize) {
+    const QString path = QUrl::fromPercentEncoding(id.toUtf8());
+    const QSize target = requestedSize.isValid() ? requestedSize : QSize(32, 32);
+    // Requests execute on Qt's image loading thread. Keep native icon state local,
+    // rather than accessing a QFileSystemModel created on the GUI thread.
+    QAbstractFileIconProvider iconProvider;
+    QIcon icon = iconProvider.icon(QFileInfo(path));
+    if (icon.isNull()) icon = iconProvider.icon(QAbstractFileIconProvider::Folder);
+    const QImage image = icon.pixmap(target).toImage();
+
+    if (size) *size = image.size();
+    return image;
+}
+
+namespace {
+QImage placeholder(const QString& text, const QSize& size) {
+    QImage image(size.expandedTo(QSize(160, 120)), QImage::Format_RGBA8888);
+    image.fill(QColor(QStringLiteral("#E8EBEB")));
+    QPainter painter(&image);
+    painter.setPen(QColor(QStringLiteral("#69747D")));
+    painter.drawText(image.rect().adjusted(12, 12, -12, -12), Qt::AlignCenter | Qt::TextWordWrap,
+                     text);
+    return image;
+}
+
+class ThumbnailImageResponse final : public QQuickImageResponse {
+  public:
+    ThumbnailImageResponse(ImageLoader* loader, QString id, QSize requestedSize)
+        : loader_(loader), id_(std::move(id)), requestedSize_(requestedSize) {
+        // Qt creates responses on its image-reader thread, but the loader and
+        // callbacks run on the GUI thread. Keep deletion on that same thread:
+        // QPointer alone cannot protect a GUI callback from concurrent deletion.
+        moveToThread(loader->thread());
+        QMetaObject::invokeMethod(this, [this] { start(); }, Qt::QueuedConnection);
+    }
+
+    QQuickTextureFactory* textureFactory() const override {
+        const QMutexLocker lock(&mutex_);
+        return AccountedTextureFactory::create(image_, imageOwnership_.ledger());
+    }
+
+    void cancel() override {
+        cancelled_.store(true, std::memory_order_relaxed);
+        {
+            // Qt can cancel on its image-loading thread. Signal the shared decode
+            // context now, rather than waiting for the next GUI event-loop turn.
+            const QMutexLocker lock(&mutex_);
+            handle_.cancel();
+        }
+        QMetaObject::invokeMethod(this, [this] { finish(); }, Qt::QueuedConnection);
+    }
+
+    [[nodiscard]] QImage image() const {
+        const QMutexLocker lock(&mutex_);
+        return image_;
+    }
+
+  private:
+    void start() {
+        if (cancelled_.load(std::memory_order_relaxed)) { finish(); return; }
+        if (!loader_) { finish(); return; }
+        const QString path = QUrl::fromPercentEncoding(
+            id_.section(QLatin1Char('?'), 0, 0).toUtf8());
+        std::optional<RawImageParameters> parameters = loader_->rawParameters(path);
+        const QPointer<ThumbnailImageResponse> self(this);
+        const bool galleryFull = id_.contains(QStringLiteral("purpose=gallery-full"));
+        const bool navigation = id_.contains(QStringLiteral("purpose=navigation"));
+        const bool galleryThumbnail = id_.contains(QStringLiteral("purpose=gallery-thumbnail"));
+        const bool galleryPreview = !galleryFull && !galleryThumbnail && id_.contains(QStringLiteral("purpose=gallery"));
+        const LoadCategory category = galleryFull || galleryPreview || galleryThumbnail
+                                          ? LoadCategory::Interactive
+                                          : id_.contains(QStringLiteral("priority=near"))
+                                                ? LoadCategory::NearViewport
+                                                : LoadCategory::VisibleThumbnail;
+        const DecodePurpose purpose = galleryFull
+                                          ? DecodePurpose::Full
+                                          : galleryPreview ? DecodePurpose::Preview
+                                                           : DecodePurpose::Thumbnail;
+        DecodeRequest request{path, purpose, requestedSize_, parameters};
+        request.requireDisplayImage = galleryFull || galleryPreview;
+        auto handle = loader_->request(
+            ++requestCounter_, std::move(request),
+            [self](quint64, const DecodeResult& result) {
+                if (!self) return;
+                // Queue completion so the engine cannot reclaim the response inside a loader callback.
+                // Publish the handle and leave start() before emitting finished:
+                // the engine can reclaim the response as soon as it receives it.
+                QMetaObject::invokeMethod(self, [self, result] {
+                    if (self) self->complete(result);
+                }, Qt::QueuedConnection);
+            },
+            RequestOptions{category, 0, navigation ? QStringLiteral("qml-navigation") : QStringLiteral("qml-thumbnail"),
+                           !navigation && !galleryThumbnail && !galleryPreview && !galleryFull});
+        const QMutexLocker lock(&mutex_);
+        handle_ = std::move(handle);
+        // Cancellation may have arrived between start()'s first check and attaching
+        // the handle. Reconcile it without leaving an unowned shared consumer.
+        if (cancelled_.load(std::memory_order_relaxed)) handle_.cancel();
+    }
+
+    void complete(const DecodeResult& result) {
+        if (finished_ || cancelled_.load(std::memory_order_relaxed)) return;
+        QImage image;
+        if (result.frame && result.frame->qImage()) image = *result.frame->qImage();
+        if (image.isNull()) image = placeholder(QStringLiteral("Preview unavailable"), requestedSize_);
+        {
+            const QMutexLocker lock(&mutex_);
+            image_ = std::move(image);
+            if (loader_) imageOwnership_ = loader_->accountImagePixels(image_);
+        }
+        finish(); // Final access to this response; finished() permits its destruction.
+    }
+
+    void finish() { if (!finished_) { finished_ = true; emit finished(); } }
+    bool finished_ = false;
+    QPointer<ImageLoader> loader_;
+    QString id_;
+    QSize requestedSize_;
+    LoadHandle handle_;
+    mutable QMutex mutex_;
+    QImage image_;
+    PixelMemoryOwnership imageOwnership_;
+    std::atomic_bool cancelled_{false};
+    inline static std::atomic<quint64> requestCounter_{0};
+};
+} // namespace
+
+ThumbnailImageProvider::ThumbnailImageProvider(std::shared_ptr<const IImageDecoder> decoder,
+                                               ImageLoader* loader)
+    : loader_(loader) {
+    Q_UNUSED(decoder);
+}
+
+QQuickImageResponse* ThumbnailImageProvider::requestImageResponse(const QString& id,
+                                                                  const QSize& requestedSize) {
+    const bool galleryFull = id.contains(QStringLiteral("purpose=gallery-full"));
+    const bool galleryThumbnail = id.contains(QStringLiteral("purpose=gallery-thumbnail"));
+    const bool galleryPreview = !galleryFull && !galleryThumbnail && id.contains(QStringLiteral("purpose=gallery"));
+    const QSize target = galleryFull
+                             ? QSize{}
+                             : galleryPreview ? requestedSize.boundedTo(QSize(2048, 2048))
+                                              : bucketedSize(requestedSize);
+    return new ThumbnailImageResponse(loader_, id, target);
+}
+
+QImage ThumbnailImageProvider::requestImage(const QString& id, QSize* size,
+                                            const QSize& requestedSize) {
+    auto* response = static_cast<ThumbnailImageResponse*>(requestImageResponse(id, requestedSize));
+    QEventLoop loop;
+    QObject::connect(response, &QQuickImageResponse::finished, &loop, &QEventLoop::quit);
+    loop.exec();
+    QImage image = response->image();
+    if (size) *size = image.size();
+    response->deleteLater(); // Response lifetime belongs to the loader's thread.
+    return image;
+}
+
+QSize ThumbnailImageProvider::bucketedSize(const QSize& requestedSize) {
+    const QSize fallback(256, 256);
+    const int edge = qMax(requestedSize.isValid() ? qMax(requestedSize.width(), requestedSize.height())
+                                                   : fallback.width(),
+                          1);
+    for (const int bucket : {128, 256, 384, 512}) {
+        if (edge <= bucket) return {bucket, bucket};
+    }
+    return {512, 512};
+}
+} // namespace mvpview

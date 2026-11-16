@@ -1,0 +1,104 @@
+pragma Singleton
+import QtQuick
+
+QtObject {
+    property bool darkMode: false
+    property string canvasBackgroundMode: "neutral"
+
+    // Neutral workbench surfaces keep image content visually dominant.
+    readonly property color sensorWhite: darkMode ? "#1C1C1E" : "#FAFAFA"
+    readonly property color paperWhite: darkMode ? "#242426" : "#F5F5F5"
+    readonly property color raisedSurface: darkMode ? "#29292C" : "#FFFFFF"
+    readonly property color opticalGray: darkMode ? "#39393D" : "#E5E5E5"
+    readonly property color softHover: darkMode ? "#303033" : "#EEEEEF"
+    readonly property color pressedSurface: darkMode ? "#38383C" : "#E5E5E7"
+    readonly property color graphiteInk: darkMode ? "#DDDDE2" : "#303036"
+    readonly property color mutedInk: darkMode ? "#A8A8B0" : "#666666"
+    readonly property color faintInk: darkMode ? "#A5A5AB" : "#666666"
+    // Indigo belongs to interaction; image wells and viewing canvases stay neutral.
+    readonly property color accent: darkMode ? "#A5A5FF" : "#5B5BD6"
+    readonly property color accentSurface: darkMode ? "#2D2D43" : "#EEEEFA"
+    readonly property color accentHoverSurface: darkMode ? "#383852" : "#E3E3F7"
+    readonly property color selectionMutedInk: darkMode ? "#B7B7CC" : "#656579"
+    readonly property color probeBlue: accent
+    readonly property color exposureAmber: darkMode ? "#E0A357" : "#B87524"
+    readonly property color danger: darkMode ? "#F17A7A" : "#C94E4E"
+    readonly property color dangerSurface: darkMode ? "#432A2D" : "#FBEDED"
+    readonly property color dangerBorder: darkMode ? "#724248" : "#E5BABA"
+    readonly property color success: darkMode ? "#85C79C" : "#3E7452"
+    readonly property color successSurface: darkMode ? "#243A2C" : "#EAF5EE"
+    readonly property color successBorder: darkMode ? "#3E674C" : "#BCD9C6"
+    readonly property color accentBorder: darkMode ? "#8585E8" : "#7777D8"
+    readonly property color primaryButton: accent
+    readonly property color primaryButtonHover: darkMode ? "#B7B7FF" : "#4D4DC1"
+    readonly property color primaryButtonText: darkMode ? "#1B1B31" : "#FFFFFF"
+    readonly property color overlay: darkMode ? "#73000000" : "#660E1820"
+    readonly property color searchFieldSurface: darkMode ? "#242426" : "#FFFFFF"
+    readonly property color searchFieldBorder: darkMode ? "#525258" : "#D9D9DC"
+    readonly property color searchFieldHoverBorder: darkMode ? "#76767E" : "#A5A5AC"
+    readonly property color searchFieldFocusBorder: accent
+    readonly property color canvasBackground:
+        canvasBackgroundMode === "dark" ? "#2D2D30"
+        : canvasBackgroundMode === "black" ? "#000000"
+        : canvasBackgroundMode === "white" ? "#FFFFFF"
+        : "#A0A0A0"
+
+    // Image inspection overlays sit on top of arbitrary pixels, so they intentionally
+    // remain theme-independent and use a high-contrast photographic HUD palette.
+    readonly property color inspectionOverlay: "#E61B1F23"
+    readonly property color inspectionOverlayMuted: "#D91B1F23"
+    readonly property color inspectionOverlayBorder: "#66FFFFFF"
+    readonly property color inspectionText: "#FFFFFFFF"
+    readonly property color inspectionMutedText: "#DDE7EBEE"
+    readonly property color inspectionAccentText: "#FF9BCBFF"
+
+    // Compact file-type badges used by image metadata rows.
+    readonly property color encodedBadgeSurface: darkMode ? "#22364D" : "#E8F1FC"
+    readonly property color encodedBadgeBorder: darkMode ? "#36587A" : "#C5D9F1"
+    readonly property color encodedBadgeText: darkMode ? "#A9CFF4" : "#315F91"
+    readonly property color yuvBadgeSurface: darkMode ? "#203C39" : "#E5F5F2"
+    readonly property color yuvBadgeBorder: darkMode ? "#35605B" : "#B9DED7"
+    readonly property color yuvBadgeText: darkMode ? "#8BD6CA" : "#267266"
+    readonly property color rawBadgeSurface: darkMode ? "#453320" : "#FFF1DE"
+    readonly property color rawBadgeBorder: darkMode ? "#6D4F2D" : "#EDCFA4"
+    readonly property color rawBadgeText: darkMode ? "#F3BE78" : "#955817"
+
+    // Quiet tinted surfaces pair with indigo text and explicit selection marks.
+    readonly property color explorerSelectionBg: accentSurface
+    readonly property color explorerHoverBg: softHover
+    readonly property color explorerIndentGuide: darkMode ? "#404040" : "#D5D9DC"
+    readonly property string iconPrefix: darkMode ? "qrc:/icons/ui-dark/" : "qrc:/icons/ui/"
+    readonly property real disabledOpacity: darkMode ? 0.52 : 0.38
+    readonly property color sidebarSurface: darkMode ? "#242426" : "#F5F5F5"
+    readonly property int metadataFontSize: 11
+    readonly property int bodyFontSize: 13
+    readonly property int captionFontSize: 12
+    readonly property int titleFontSize: 16
+    readonly property int bodyFontWeight: Font.Normal
+    readonly property int emphasisFontWeight: Font.Medium
+    readonly property real descriptionLineHeight: 1.35
+
+    // Distinct cues for file selection, keyboard focus, and the active pane.
+    readonly property color thumbnailWell: darkMode ? "#282828" : "#E8E8E8"
+    readonly property color fileSelectionSurface: accentSurface
+    readonly property color fileSelectionBadge: accent
+    readonly property color fileSelectionBorder: accentBorder
+    readonly property color keyboardFocus: accent
+    readonly property color activePaneHeader: darkMode ? "#252530" : "#F5F5FC"
+    readonly property color activePaneAccent: accent
+
+    readonly property int unit: 4
+    readonly property int toolbarHeight: 38
+    readonly property int sidebarWidth: 272
+    readonly property int radius: 4
+    readonly property int iconSize: 20
+    readonly property int touchTarget: 32
+    readonly property int fast: 120
+    readonly property int normal: 180
+    // The application provides the platform's current UI and fixed-width fonts.
+    // Empty fallbacks keep standalone QML tooling and tests on their own defaults.
+    readonly property string uiFont:
+        typeof systemUiFontFamily !== "undefined" ? systemUiFontFamily : ""
+    readonly property string monoFont:
+        typeof systemFixedFontFamily !== "undefined" ? systemFixedFontFamily : ""
+}
