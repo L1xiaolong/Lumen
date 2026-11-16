@@ -216,6 +216,11 @@ endif()
 # same application icon used by the macOS bundle.
 set(_mvpview_qml_windows_icon "${PROJECT_SOURCE_DIR}/assets/icons/windows/Lumen.ico")
 if(WIN32 AND EXISTS "${_mvpview_qml_windows_icon}")
+    qt_add_resources(LumenQml "mvpview_windows_icon"
+        PREFIX "/brand"
+        BASE "${PROJECT_SOURCE_DIR}/assets/icons/windows"
+        FILES "${_mvpview_qml_windows_icon}"
+    )
     set(_mvpview_qml_windows_icon_rc "${CMAKE_CURRENT_BINARY_DIR}/LumenQmlIcon.rc")
     string(CONCAT _mvpview_qml_windows_icon_rc_content
         "IDI_ICON1 ICON \"${_mvpview_qml_windows_icon}\"\n"

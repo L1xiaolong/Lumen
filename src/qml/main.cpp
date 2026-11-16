@@ -54,7 +54,10 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     QCoreApplication::setApplicationName(QStringLiteral("Lumen"));
     QCoreApplication::setOrganizationName(QStringLiteral("MvpView"));
     QCoreApplication::setApplicationVersion(QStringLiteral(MVPVIEW_PROJECT_VERSION));
-#ifndef Q_OS_MACOS
+#ifdef Q_OS_WIN
+    // Match Explorer, shortcuts and the installer, including every DPI size.
+    app.setWindowIcon(QIcon(QStringLiteral(":/brand/Lumen.ico")));
+#elif !defined(Q_OS_MACOS)
     // macOS should keep the icon declared by CFBundleIconFile for the whole
     // application lifetime. Setting the generic runtime PNG here replaces the
     // padded macOS artwork in the Dock after launch.
