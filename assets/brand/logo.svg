@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="title description">
+  <title id="title">Lumen</title>
+  <desc id="description">Two slanted image planes separated by a stepped aperture of light.</desc>
+  <path fill="#5B5BD6" d="M244 64C250 61 256 65 256 72V246H220V358L84 428C73 434 64 428 64 415V168C64 150 73 136 90 128L244 64Z"/>
+  <path fill="#A5A5FF" d="M428 86C438 81 448 88 448 100V356C448 374 439 387 422 393L256 448C246 452 238 448 238 438V270H274V158L428 86Z"/>
+</svg>
