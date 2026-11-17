@@ -160,9 +160,18 @@ bool FullScreenPresentationController::begin(QWindow* window) {
         if (!monitor || !GetMonitorInfoW(monitor, &monitorInfo))
             return false;
 
-        // Preserve WS_MAXIMIZE when the main window was maximized. This keeps Qt's window-state
-        // bookkeeping stable and prevents a restore/maximize animation on the way back.
-        constexpr LONG_PTR overlappedWindowMask = static_cast<LONG_PTR>(WS_OVERLAPPEDWINDOW);
+        previousWindowFlags_ = window->flags();
+        // Keep Qt's cached frame margins in sync with the temporary native frame.
+        // ExpandedClientAreaHint otherwise leaves stale maximized client geometry
+        // after the original styles and WINDOWPLACEMENT have been restored.
+        window->setFlags((previousWindowFlags_ | Qt::FramelessWindowHint)
+                         & ~Qt::ExpandedClientAreaHint);
+
+        // Remove maximization for presentation too: a maximized HWND can be constrained
+        // back to rcWork during frame changes, leaving the taskbar area uncovered.
+        // WINDOWPLACEMENT restores the original maximized state on exit.
+        constexpr LONG_PTR overlappedWindowMask =
+            static_cast<LONG_PTR>(WS_OVERLAPPEDWINDOW | WS_MAXIMIZE);
         constexpr LONG_PTR popupStyle = static_cast<LONG_PTR>(WS_POPUP);
         constexpr LONG_PTR extendedFrameMask = static_cast<LONG_PTR>(
             WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
@@ -170,6 +179,7 @@ bool FullScreenPresentationController::begin(QWindow* window) {
         const LONG_PTR borderlessExtendedStyle = state->extendedStyle & ~extendedFrameMask;
         if (!setWindowStyle(nativeWindow, GWL_STYLE, borderlessStyle) ||
             !setWindowStyle(nativeWindow, GWL_EXSTYLE, borderlessExtendedStyle)) {
+            window->setFlags(previousWindowFlags_);
             restoreWindowsState(*state);
             return false;
         }
@@ -180,6 +190,7 @@ bool FullScreenPresentationController::begin(QWindow* window) {
                           static_cast<int>(bounds.right - bounds.left),
                           static_cast<int>(bounds.bottom - bounds.top),
                           SWP_FRAMECHANGED | SWP_NOOWNERZORDER | SWP_SHOWWINDOW)) {
+            window->setFlags(previousWindowFlags_);
             restoreWindowsState(*state);
             return false;
         }
@@ -227,6 +238,8 @@ void FullScreenPresentationController::end() {
 
 #ifdef Q_OS_WIN
     if (windowsState_) {
+        if (window_)
+            window_->setFlags(previousWindowFlags_);
         restoreWindowsState(*windowsState_);
         if (window_) {
             (void)SetForegroundWindow(windowsState_->nativeWindow);
