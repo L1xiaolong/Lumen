@@ -145,12 +145,14 @@ class ImageLoader final : public QObject {
                                          std::optional<FileSnapshot> snapshot = std::nullopt);
     bool refreshThumbnailPriority(InFlightRequest& request);
     [[nodiscard]] WeightedLruCache<ImageFrame>& cacheFor(DecodePurpose purpose);
+    void scheduleJpegStripes(const QString& path, QSize size);
     [[nodiscard]] const WeightedLruCache<ImageFrame>& cacheFor(DecodePurpose purpose) const;
     void enforceMemoryBudget(DecodePurpose insertedPurpose);
     [[nodiscard]] static qsizetype estimatedFullFrameCost(const ImageFrame& preview);
     [[nodiscard]] static qsizetype estimatedFullTextureCost(const ImageFrame& preview);
 
     void dispatch();
+    quint64 stripeSchedule_ = 0;
     void scheduleDispatch();
     void reclaimInactiveResources();
     void retireCacheOwner(std::shared_ptr<const void> owner, qsizetype cost);

@@ -1,6 +1,7 @@
 #include "io/image_loader.h"
 
 #include "io/directory_scanner.h"
+#include "io/jpeg_stripe_cache.h"
 #include "diagnostics/diagnostics.h"
 #include "core/nominal_gpu_bytes.h"
 #include "io/metadata_reader.h"
@@ -42,12 +43,18 @@ bool isHeaderlessImage(const QString& path) {
 }
 
 QString cacheKeyPrefix(const DecodeRequest& request, const QString& path, qint64 size, qint64 modifiedMs) {
-    return path + QLatin1Char('|') + QString::number(size) +
+    QString key = path + QLatin1Char('|') + QString::number(size) +
         QLatin1Char('|') + QString::number(modifiedMs) +
         QLatin1Char('|') + QString::number(request.maximumSize.width()) + QLatin1Char('x') +
         QString::number(request.maximumSize.height()) + QLatin1Char('|') +
         QString::number(static_cast<int>(request.purpose) + (request.metadataSource ? 100 : 0) +
                         (request.requireDisplayImage ? 200 : 0));
+    if (request.purpose == DecodePurpose::Region) {
+        const QRect region = request.sourceRegion;
+        key += QStringLiteral("|%1,%2,%3,%4").arg(region.x()).arg(region.y())
+                   .arg(region.width()).arg(region.height());
+    }
+    return key;
 }
 
 QString computeDisplayRevision(const IImageDecoder& decoder) {
@@ -290,6 +297,8 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
         }
     }
     if (auto cached = reusable ? reusable : cacheFor(request.purpose).get(key)) {
+        if (request.purpose == DecodePurpose::Preview && priority >= 100)
+            scheduleJpegStripes(request.path, cached->metadata.sourceSize);
 
         if (request.purpose == DecodePurpose::Thumbnail) {
             const QSize sourceSize = cached->metadata.sourceSize.isValid()
@@ -384,7 +393,8 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
     // that may have changed by the time its decode is delivered.
     QStringList obsoletePreviewPrefixes, coveringPreviewPrefixes;
     QString coveringFullPrefix;
-    if (!request.metadataSource && request.purpose != DecodePurpose::Thumbnail) {
+    if (!request.metadataSource &&
+        (request.purpose == DecodePurpose::Preview || request.purpose == DecodePurpose::Full)) {
         auto candidate = request;
         candidate.purpose = DecodePurpose::Full;
         candidate.maximumSize = {};
@@ -603,7 +613,8 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
                             // wastes pixels without providing another cache hit. RAW keeps
                             // its separate CPU fallback/source-plane representations.
                             const bool compact = !result.frame->rawParameters &&
-                                result.frame->qImage() && purpose != DecodePurpose::Thumbnail;
+                                result.frame->qImage() &&
+                                (purpose == DecodePurpose::Preview || purpose == DecodePurpose::Full);
                             const QString suffix = frameKey.mid(keyPrefix.size());
                             bool covered = false;
                             if (compact && purpose == DecodePurpose::Preview) {
@@ -639,6 +650,9 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
                         return;
                     }
                     const InFlightRequest inFlight = self->inFlight_.take(key);
+                    if (purpose == DecodePurpose::Preview && result.frame && inFlight.priority >= 100 &&
+                        activeConsumers->load() > 0)
+                        self->scheduleJpegStripes(sourcePath, result.frame->metadata.sourceSize);
                     for (const PendingRequest& request : inFlight.pending) {
                         if (request.state->cancelled.load(std::memory_order_relaxed)) continue;
                         request.callback(request.requestId, result);
@@ -787,6 +801,26 @@ void ImageLoader::dispatch() {
     if (!completions_.empty() && !dispatchWake_.isActive())
         dispatchWake_.start(std::max(1, 16 - int(completionClock_.elapsed())));
     if (inFlight_.isEmpty() && completions_.empty()) dispatchTimer_.stop();
+}
+
+void ImageLoader::scheduleJpegStripes(const QString& path, QSize size) {
+#ifdef MVPVIEW_JPEG_STRIPES
+    const auto schedule = ++stripeSchedule_;
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if ((suffix != QStringLiteral("jpg") && suffix != QStringLiteral("jpeg")) || !JpegStripeCache::eligible(size)) return;
+    QTimer::singleShot(900, this, [this, path, size, schedule] {
+        if (schedule != stripeSchedule_) return;
+        const bool started = writePool_.tryStart([path, size, budget = decodeWorkingBudget_] {
+            if (JpegStripeCache::exists(path)) return;
+            const auto reservation = budget->reserve(estimatedPixelBytes(size, 12), [] { return false; }, [] { return -50; });
+            if (reservation) JpegStripeCache::build(path, size);
+        });
+        if (!started) scheduleJpegStripes(path, size);
+    });
+#else
+    Q_UNUSED(path);
+    Q_UNUSED(size);
+#endif
 }
 
 void ImageLoader::prefetchAdjacentImages(const QStringList& paths, int index, const QSize& size) {
@@ -1136,6 +1170,7 @@ void ImageLoader::reclaimInactiveResources() {
 WeightedLruCache<ImageFrame>& ImageLoader::cacheFor(DecodePurpose purpose) {
     switch (purpose) {
     case DecodePurpose::Thumbnail: return thumbnailCache_;
+    case DecodePurpose::Region:
     case DecodePurpose::Preview: return previewCache_;
     case DecodePurpose::Full: return fullCache_;
     }
@@ -1145,6 +1180,7 @@ WeightedLruCache<ImageFrame>& ImageLoader::cacheFor(DecodePurpose purpose) {
 const WeightedLruCache<ImageFrame>& ImageLoader::cacheFor(DecodePurpose purpose) const {
     switch (purpose) {
     case DecodePurpose::Thumbnail: return thumbnailCache_;
+    case DecodePurpose::Region:
     case DecodePurpose::Preview: return previewCache_;
     case DecodePurpose::Full: return fullCache_;
     }

@@ -24,6 +24,7 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QImageReader>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -38,6 +39,11 @@
 
 static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service& diagnosticService) {
     QGuiApplication app(argc, argv);
+    constexpr int minimumImageAllocationLimitMiB = 512;
+    const int imageAllocationLimitMiB = QImageReader::allocationLimit();
+    if (imageAllocationLimitMiB > 0 && imageAllocationLimitMiB < minimumImageAllocationLimitMiB) {
+        QImageReader::setAllocationLimit(minimumImageAllocationLimitMiB);
+    }
     mvpview::FileClipboard::initialize();
 #ifdef Q_OS_WIN
     // Qt defaults to D3D11 on Windows. Some Intel drivers crash while Qt Quick creates

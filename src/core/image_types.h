@@ -6,6 +6,7 @@
 #include <QByteArray>
 #include <QDateTime>
 #include <QImage>
+#include <QRect>
 #include <QSize>
 #include <QString>
 #include <QStringList>
@@ -131,6 +132,7 @@ struct ImageFrame {
     ImageDescriptor descriptor;
     ImageMetadata metadata;
     ImageStorage storage;
+    QRect decodedRegion;
     // Immutable upload buffers are prepared on decoder workers, never during scene sync.
     QImage uploadImage;
     std::shared_ptr<const PlaneBufferSet> uploadPlanes;

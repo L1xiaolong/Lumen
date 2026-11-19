@@ -11,6 +11,7 @@
 #include <QHoverEvent>
 #include <QMatrix4x4>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QPointer>
 #include <QQuickWindow>
 #include <QWheelEvent>
@@ -200,6 +201,7 @@ class Renderer final : public QQuickRhiItemRenderer {
         std::unique_ptr<QRhiTexture> v;
         std::unique_ptr<QRhiTexture> raw;
         std::unique_ptr<QRhiShaderResourceBindings> sideBindings;
+        QRect encodedSourceRect;
         bool gpuYuv = false;
         bool gpuBayer = false;
 
@@ -210,6 +212,7 @@ class Renderer final : public QQuickRhiItemRenderer {
             u.reset();
             v.reset();
             raw.reset();
+            encodedSourceRect = {};
             gpuYuv = false;
             gpuBayer = false;
         }
@@ -234,6 +237,9 @@ class Renderer final : public QQuickRhiItemRenderer {
     qreal compareAmount_ = 0.5;
     QColor backgroundColor_{160, 160, 160};
     bool smoothDisplay_ = true;
+    bool viewportTextureEnabled_ = false;
+    QRect viewportSourceRect_;
+    int viewportSampleStep_ = 1;
     bool samplerDirty_ = true;
     bool resourcesDirty_ = true;
     bool resourceFailure_ = false;
@@ -489,6 +495,55 @@ class Renderer final : public QQuickRhiItemRenderer {
         resourceCreated(bayerCompareBindings_->create(), "bayerCompareBindings");
     }
 
+    void updateViewportTexture() {
+        QRect visible;
+        int sampleStep = 1;
+        constexpr qsizetype minimumViewportTextureBytes = 64LL * 1024 * 1024;
+        const QImage image = displayImages_.value(0);
+        if (viewportTextureEnabled_ && presentationMode_ == 0 && frames_.size() == 1 &&
+            image.format() == QImage::Format_RGBA8888 && image.sizeInBytes() > minimumViewportTextureBytes &&
+            !itemSize_.isEmpty()) {
+            const ViewState state = viewStates_.value(0);
+            const QSize sourceSize = logicalSize(frames_.value(0));
+            if (sourceSize == image.size()) {
+                const QRectF region = ViewTransform::visibleNormalizedRect(itemSize_, sourceSize, state);
+                visible = QRectF(region.x() * sourceSize.width(), region.y() * sourceSize.height(),
+                                 region.width() * sourceSize.width(), region.height() * sourceSize.height())
+                              .toAlignedRect().intersected(image.rect());
+                const QSize outputSize = renderTarget()->pixelSize();
+                const double dpr = std::max(double(outputSize.width()) / itemSize_.width(),
+                                            double(outputSize.height()) / itemSize_.height());
+                const double displayScale = state.pixelsPerImagePixel * dpr;
+                while (sampleStep < 64 && displayScale * sampleStep <= 0.5) sampleStep *= 2;
+            }
+        }
+        if (visible.isEmpty() ? viewportSourceRect_.isEmpty()
+                              : viewportSampleStep_ == sampleStep && viewportSourceRect_.contains(visible) &&
+                                    image.rect().contains(viewportSourceRect_)) {
+            return;
+        }
+        const int margin = 64 * sampleStep;
+        viewportSourceRect_ = visible.isEmpty() ? QRect{} :
+            visible.adjusted(-margin, -margin, margin, margin).intersected(image.rect());
+        viewportSampleStep_ = sampleStep;
+        slotDirty_[0] = resourcesDirty_ = true;
+    }
+
+    QImage viewportImage(const QImage& source) const {
+        if (viewportSampleStep_ == 1) return source.copy(viewportSourceRect_);
+        const QSize extent = viewportSourceRect_.size();
+        const QSize size((extent.width() + viewportSampleStep_ - 1) / viewportSampleStep_,
+                         (extent.height() + viewportSampleStep_ - 1) / viewportSampleStep_);
+        QImage image(size, source.format());
+        if (image.isNull()) return {};
+        QPainter painter(&image);
+        painter.setCompositionMode(QPainter::CompositionMode_Source);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, smoothDisplay_);
+        painter.drawImage(QRectF(image.rect()), source, QRectF(viewportSourceRect_));
+        painter.end();
+        return image;
+    }
+
     void rebuildResources(QRhiCommandBuffer* commandBuffer) {
         auto* updates = rhi_->nextResourceUpdateBatch();
         const bool compositeRequested = presentationMode_ != 0 && frames_.size() == 2;
@@ -508,6 +563,14 @@ class Renderer final : public QQuickRhiItemRenderer {
             if (encoded.isNull() || ((slot.gpuYuv || slot.gpuBayer) && !compositeRequested)) {
                 encoded = QImage(1, 1, QImage::Format_RGBA8888);
                 encoded.fill(Qt::transparent);
+            }
+            slot.encodedSourceRect = frame ? frame->decodedRegion : QRect{};
+            if (index == 0 && !viewportSourceRect_.isEmpty()) {
+                QImage region = viewportImage(encoded);
+                if (!region.isNull()) {
+                    encoded = std::move(region);
+                    slot.encodedSourceRect = viewportSourceRect_;
+                }
             }
             const int maximum = rhi_->resourceLimit(QRhi::TextureSizeMax);
             if (maximum > 0 && (encoded.width() > maximum || encoded.height() > maximum))
@@ -588,12 +651,14 @@ class Renderer final : public QQuickRhiItemRenderer {
             return matrix;
         }
         const ViewState state = viewStates_.value(slot);
-        const double imageWidth = imageSize.width() * state.pixelsPerImagePixel;
-        const double imageHeight = imageSize.height() * state.pixelsPerImagePixel;
-        const double centerX = cell.center().x() + (0.5 - state.normalizedCenter.x()) * imageWidth;
-        const double centerY = cell.center().y() + (0.5 - state.normalizedCenter.y()) * imageHeight;
-        const float ndcX = static_cast<float>(2.0 * centerX / itemSize_.width() - 1.0);
-        const float ndcY = static_cast<float>(1.0 - 2.0 * centerY / itemSize_.height());
+        const QRect sourceRect = slots_[static_cast<std::size_t>(slot)].encodedSourceRect;
+        const QRectF region = sourceRect.isEmpty() ? QRectF(QPointF{}, imageSize) : QRectF(sourceRect);
+        const double imageWidth = region.width() * state.pixelsPerImagePixel;
+        const double imageHeight = region.height() * state.pixelsPerImagePixel;
+        const QPointF center = cell.topLeft() + ViewTransform::imageToWidget(
+            region.center(), cell.size(), imageSize, state);
+        const float ndcX = static_cast<float>(2.0 * center.x() / itemSize_.width() - 1.0);
+        const float ndcY = static_cast<float>(1.0 - 2.0 * center.y() / itemSize_.height());
         QMatrix4x4 model;
         model.translate(ndcX, ndcY);
         model.scale(static_cast<float>(imageWidth / itemSize_.width()),
@@ -661,6 +726,7 @@ class Renderer final : public QQuickRhiItemRenderer {
         if (samplerDirty_ || !sampler_)
             rebuildSampler();
         if (resourceFailure_) return;
+        updateViewportTexture();
         if (resourcesDirty_ || !slots_[0].encoded)
             rebuildResources(commandBuffer);
         if (resourceFailure_) return;
@@ -697,10 +763,13 @@ class Renderer final : public QQuickRhiItemRenderer {
         presentationMode_ = incomingMode;
         compareAmount_ = canvas->compareAmount();
         backgroundColor_ = canvas->backgroundColor();
+        viewportTextureEnabled_ = canvas->viewportTextureEnabled();
         const bool incomingSmoothDisplay = canvas->smoothDisplay();
         if (smoothDisplay_ != incomingSmoothDisplay) {
             smoothDisplay_ = incomingSmoothDisplay;
             samplerDirty_ = true;
+            if (!viewportSourceRect_.isEmpty() && viewportSampleStep_ > 1)
+                slotDirty_[0] = resourcesDirty_ = true;
         }
         viewStates_.clear();
         viewStates_.reserve(frames_.size());
@@ -717,6 +786,7 @@ class Renderer final : public QQuickRhiItemRenderer {
             commandBuffer->endPass();
         };
         if (resourceFailure_) { clearFailedCanvas(); return; }
+        updateViewportTexture();
         const bool resourcesChanged = resourcesDirty_;
         if (samplerDirty_ || !sampler_)
             rebuildSampler();
@@ -1026,6 +1096,12 @@ void QmlImageCanvas::setSmoothDisplay(bool enabled) {
         return;
     smoothDisplay_ = enabled;
     emit smoothDisplayChanged();
+    update();
+}
+
+void QmlImageCanvas::setViewportTextureEnabled(bool enabled) {
+    if (viewportTextureEnabled_ == enabled) return;
+    viewportTextureEnabled_ = enabled;
     update();
 }
 

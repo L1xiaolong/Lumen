@@ -11,6 +11,7 @@
 namespace mvpview {
 
 class QmlImageCanvas;
+struct ViewState;
 
 // Owns a full-screen viewing session while the QML page owns every visual and interaction
 // surface. The controller deliberately exposes file operations as small commands rather than
@@ -70,6 +71,9 @@ class FullScreenController final : public QObject {
     void showIndex(int index);
     void requestPreview(const QString& path, quint64 generation, QSize size, bool quick);
     void scheduleFullFrame(const QString& path, quint64 generation);
+    void updateZoomDetail(const ViewState& state, bool force = false);
+    void requestDetailRegion(const QRect& region);
+    [[nodiscard]] QRect visibleSourceRegion(const ViewState& state) const;
     void requestFullFrame(const QString& path, quint64 generation);
     void refreshCanvas(bool resetView);
 
@@ -83,7 +87,10 @@ class FullScreenController final : public QObject {
     bool exactResolutionRequested_ = false;
     QString errorText_;
     ImageFramePtr frame_;
+    ImageFramePtr detailFrame_;
+    QRect requestedDetailRegion_;
     LoadHandle previewHandle_;
+    LoadHandle detailHandle_;
     LoadHandle fullHandle_;
     QTimer fullLoadTimer_;
 };

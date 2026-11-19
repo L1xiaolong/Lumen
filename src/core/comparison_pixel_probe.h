@@ -20,6 +20,7 @@ struct ComparisonPixelSample {
     // source container's value range. Empty when the frame has no such value.
     QString encodedValueText;
     QString sourceRgbText;
+    bool approximate = false;
     // The frame holds a bounded proxy, so exact source samples need a full decode first.
     bool sourceSamplesPending = false;
 
@@ -29,8 +30,7 @@ struct ComparisonPixelSample {
 
 class ComparisonPixelProbe final {
   public:
-    // Zoom/pan space of a frame: the oriented source size for RAW/YUV planes, otherwise the
-    // decoded size a QImage backed frame renders at.
+    // Zoom/pan space stays at the oriented source size even when rendering a preview.
     [[nodiscard]] static QSize logicalFrameSize(const ImageFrame& frame);
     [[nodiscard]] static QPointF normalizedPixelCenter(const QPoint& pixel, const QSize& imageSize);
     [[nodiscard]] static ComparisonPixelSample sampleAtDisplayPixel(const ImageFrame& frame,

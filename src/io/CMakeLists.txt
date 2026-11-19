@@ -58,6 +58,7 @@ qt_add_library(mvpview_io STATIC
     raw_preset_store.cpp
     qt_image_decoder.h
     qt_image_decoder.cpp
+    jpeg_stripe_cache.h
     metadata_reader.h
     encoded_color_management.h
     directory_scanner.h
@@ -75,6 +76,13 @@ qt_add_library(mvpview_io STATIC
 )
 
 target_include_directories(mvpview_io PUBLIC ${PROJECT_SOURCE_DIR}/src)
+find_package(libjpeg-turbo 3.1.2 CONFIG QUIET)
+if(TARGET libjpeg-turbo::turbojpeg)
+    target_sources(mvpview_io PRIVATE jpeg_stripe_cache.cpp)
+    target_link_libraries(mvpview_io PRIVATE libjpeg-turbo::turbojpeg)
+    target_compile_definitions(mvpview_io PRIVATE MVPVIEW_JPEG_STRIPES=1
+        MVPVIEW_TURBOJPEG_VERSION="${libjpeg-turbo_VERSION}")
+endif()
 # Optional third-party implementations are separate static adapters. Their library headers and
 # compile options do not leak into the generic IO sources or UI target.
 target_link_libraries(mvpview_io

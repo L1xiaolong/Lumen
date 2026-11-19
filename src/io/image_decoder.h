@@ -3,6 +3,7 @@
 #include "core/image_types.h"
 #include "core/source_frame_cache.h"
 
+#include <QRect>
 #include <QSize>
 #include <QString>
 
@@ -15,7 +16,7 @@
 
 namespace mvpview {
 
-enum class DecodePurpose { Thumbnail, Preview, Full };
+enum class DecodePurpose { Thumbnail, Preview, Full, Region };
 enum class DecodeExecutionMode { Parallel, Serialized };
 
 struct DecodeRequest {
@@ -44,6 +45,7 @@ struct DecodeRequest {
     QString path;
     DecodePurpose purpose = DecodePurpose::Preview;
     QSize maximumSize;
+    QRect sourceRegion;
     std::optional<RawImageParameters> rawParameters;
 };
 

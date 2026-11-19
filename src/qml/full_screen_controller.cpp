@@ -87,10 +87,7 @@ void FullScreenController::open(const QStringList& requestedPaths, int initialIn
                            true);
     }
     if (paths_.isEmpty()) {
-        currentIndex_ = -1;
-        frame_.reset();
-        refreshCanvas(true);
-        emit stateChanged();
+        closeSession();
         emit closeRequested();
         return;
     }
@@ -104,6 +101,7 @@ void FullScreenController::closeSession() {
                            {{QStringLiteral("slots"), static_cast<int>(paths_.size())}}, true);
     fullLoadTimer_.stop();
     previewHandle_.cancel();
+    detailHandle_.cancel();
     fullHandle_.cancel();
     ++generation_;
     paths_.clear();
@@ -113,6 +111,8 @@ void FullScreenController::closeSession() {
     exactResolutionRequested_ = false;
     errorText_.clear();
     frame_.reset();
+    detailFrame_.reset();
+    requestedDetailRegion_ = {};
     refreshCanvas(true);
     // Shared caches survive session transitions; the loader enforces their budget.
     emit stateChanged();
@@ -120,10 +120,21 @@ void FullScreenController::closeSession() {
 
 void FullScreenController::attachCanvas(QObject* object) {
     auto* canvas = qobject_cast<QmlImageCanvas*>(object);
-    if (!canvas) return;
+    if (!canvas || canvas == canvas_) return;
+    if (canvas_) disconnect(canvas_, nullptr, this, nullptr);
     canvas_ = canvas;
     canvas_->setPresentationMode(0);
     canvas_->setSynchronized(false);
+    canvas_->setViewportTextureEnabled(true);
+    connect(canvas_, &QmlImageCanvas::viewStateChanged, this, [this](int slot, const ViewState& state) {
+        if (slot == 0) updateZoomDetail(state);
+    });
+    const auto updateRegionCoverage = [this] {
+        if (canvas_ && (detailFrame_ || !requestedDetailRegion_.isEmpty()))
+            updateZoomDetail(canvas_->effectiveViewState(0));
+    };
+    connect(canvas_, &QQuickItem::widthChanged, this, updateRegionCoverage, Qt::QueuedConnection);
+    connect(canvas_, &QQuickItem::heightChanged, this, updateRegionCoverage, Qt::QueuedConnection);
     // Hovering a RAW/YUV preview promotes it to the full decode so the readout can show exact
     // source samples, exactly like the gallery probe does.
     connect(canvas_, &QmlImageCanvas::pixelProbeFullResolutionRequested, this, [this](int) {
@@ -143,16 +154,19 @@ void FullScreenController::showNext() {
 }
 
 void FullScreenController::fitImage() {
+    exactResolutionRequested_ = false;
     if (canvas_) canvas_->fitAll();
 }
 
 void FullScreenController::actualPixels() {
     exactResolutionRequested_ = true;
     fullLoadTimer_.stop();
-    if (frame_ && !fullRequested_) {
+    if (canvas_) {
+        canvas_->actualPixelsAll();
+        updateZoomDetail(canvas_->effectiveViewState(0), true);
+    } else if (frame_ && !fullRequested_) {
         requestFullFrame(currentPath(), generation_);
     }
-    if (canvas_) canvas_->actualPixelsAll();
 }
 
 void FullScreenController::reload() {
@@ -190,10 +204,7 @@ QString FullScreenController::moveCurrentToTrash() {
     paths_.removeAt(currentIndex_);
     emit filesystemChanged();
     if (paths_.isEmpty()) {
-        currentIndex_ = -1;
-        frame_.reset();
-        refreshCanvas(true);
-        emit stateChanged();
+        closeSession();
         emit closeRequested();
         return {};
     }
@@ -215,9 +226,12 @@ void FullScreenController::showIndex(int index) {
                        {{QStringLiteral("index"), index}}, false);
     fullLoadTimer_.stop();
     previewHandle_.cancel();
+    detailHandle_.cancel();
     fullHandle_.cancel();
     currentIndex_ = index;
     frame_.reset();
+    detailFrame_.reset();
+    requestedDetailRegion_ = {};
     loading_ = true;
     fullRequested_ = false;
     exactResolutionRequested_ = false;
@@ -259,7 +273,7 @@ void FullScreenController::requestPreview(const QString& path, quint64 generatio
         self->refreshCanvas(firstFrame);
         emit self->stateChanged();
         if (self->exactResolutionRequested_) {
-            self->requestFullFrame(path, generation);
+            self->actualPixels();
         } else if (quick) {
             QTimer::singleShot(0, self, [self, path, generation, size] {
                 if (self && self->generation_ == generation && self->currentPath() == path && !self->fullRequested_)
@@ -280,12 +294,81 @@ void FullScreenController::scheduleFullFrame(const QString& path, quint64 genera
     fullLoadTimer_.start();
 }
 
+QRect FullScreenController::visibleSourceRegion(const ViewState& state) const {
+    if (!canvas_) return {};
+    const QSize source = imageSize();
+    const QSizeF viewport(canvas_->width(), canvas_->height());
+    if (source.isEmpty() || viewport.isEmpty()) return {};
+    const QPointF first = ViewTransform::widgetToImage({}, viewport, source, state);
+    const QPointF last = ViewTransform::widgetToImage(QPointF(viewport.width(), viewport.height()),
+                                                     viewport, source, state);
+    return QRectF(first, last).toAlignedRect().intersected(QRect(QPoint{}, source));
+}
+
+void FullScreenController::updateZoomDetail(const ViewState& state, bool force) {
+    if (detailFrame_) refreshCanvas(false);
+    if (!canvas_ || !frame_ || fullRequested_ || state.fitMode != FitMode::Manual) return;
+    const QSize source = imageSize();
+    const QSize preview = frame_->descriptor.size;
+    if (source.isEmpty() || preview.isEmpty()) return;
+    if (source == preview && !frame_->sourceSamplesPending) return;
+    const qreal dpr = canvas_->window() ? canvas_->window()->effectiveDevicePixelRatio() : 1.0;
+    const double previewScale = std::max(double(preview.width()) / source.width(),
+                                         double(preview.height()) / source.height());
+    if (!force && state.pixelsPerImagePixel * dpr <= previewScale * 1.05) return;
+
+    const QRect visible = visibleSourceRegion(state);
+    if (visible.isEmpty()) return;
+    if ((detailFrame_ && detailFrame_->decodedRegion.contains(visible)) ||
+        requestedDetailRegion_.contains(visible)) return;
+
+    const QRect region = visible.adjusted(-128, -128, 128, 128).intersected(QRect(QPoint{}, source));
+    const QString& format = frame_->metadata.format;
+    constexpr qsizetype maximumRegionBytes = 32LL * 1024 * 1024;
+    const qsizetype sourceBytes = estimatedPixelBytes(source, 4);
+    if (!detailFrame_ && requestedDetailRegion_.isEmpty() &&
+        (format == QStringLiteral("JPG") || format == QStringLiteral("JPEG")) &&
+        sourceBytes > 2 * maximumRegionBytes &&
+        estimatedPixelBytes(region.size(), 4) <= std::min(maximumRegionBytes, sourceBytes / 4)) {
+        requestDetailRegion(region);
+    } else {
+        requestFullFrame(currentPath(), generation_);
+    }
+}
+
+void FullScreenController::requestDetailRegion(const QRect& region) {
+    fullLoadTimer_.stop();
+    requestedDetailRegion_ = region;
+    const QString path = currentPath();
+    const quint64 generation = generation_;
+    DecodeRequest request{path, DecodePurpose::Region};
+    request.sourceRegion = region;
+    const QPointer<FullScreenController> self(this);
+    detailHandle_ = loader_->request(generation, std::move(request),
+        [self, generation, path, region](quint64 id, const DecodeResult& result) {
+            if (!self || id != generation || self->generation_ != generation ||
+                self->currentPath() != path || self->requestedDetailRegion_ != region) return;
+            self->requestedDetailRegion_ = {};
+            if (!result.frame || result.frame->decodedRegion != region ||
+                result.frame->metadata.sourceSize != self->imageSize()) {
+                if (self->canvas_ && self->canvas_->effectiveViewState(0).fitMode == FitMode::Manual)
+                    self->requestFullFrame(path, generation);
+                return;
+            }
+            self->detailFrame_ = result.frame;
+            self->refreshCanvas(false);
+        }, RequestOptions{LoadCategory::Interactive, 10, QStringLiteral("fullscreen-detail")});
+}
+
 void FullScreenController::requestFullFrame(const QString& path, quint64 generation) {
     if (fullRequested_ || path != currentPath() || generation != generation_) {
         return;
     }
     fullRequested_ = true;
+    fullLoadTimer_.stop();
     previewHandle_.cancel(); // A late preview must never replace exact pixels.
+    detailHandle_.cancel();
+    requestedDetailRegion_ = {};
     const QPointer<FullScreenController> self(this);
     fullHandle_ = loader_->request(generation, {path, DecodePurpose::Full, {}},
                      [self, generation, path](quint64 id, const DecodeResult& result) {
@@ -297,6 +380,7 @@ void FullScreenController::requestFullFrame(const QString& path, quint64 generat
             emit self->stateChanged();
             return;
         }
+        self->detailFrame_.reset();
         self->frame_ = result.frame;
         self->refreshCanvas(false);
         emit self->stateChanged();
@@ -305,7 +389,17 @@ void FullScreenController::requestFullFrame(const QString& path, quint64 generat
 
 void FullScreenController::refreshCanvas(bool resetView) {
     if (!canvas_) return;
-    canvas_->setFrames({frame_}, 0, resetView);
+    ImageFramePtr displayFrame = frame_;
+    if (!resetView && detailFrame_) {
+        const auto state = canvas_->effectiveViewState(0);
+        const QRect visible = visibleSourceRegion(state);
+        if (state.fitMode == FitMode::Manual && !visible.isEmpty() &&
+            detailFrame_->decodedRegion.contains(visible)) {
+            displayFrame = detailFrame_;
+        }
+    }
+    if (resetView || canvas_->frameAt(0) != displayFrame)
+        canvas_->setFrames({displayFrame}, 0, resetView);
     canvas_->setPresentationMode(0);
     canvas_->setSynchronized(false);
 }

@@ -44,6 +44,7 @@ class QmlImageCanvas : public QQuickRhiItem {
     int navigationRevision() const { return navigationRevision_; }
     QColor backgroundColor() const { return backgroundColor_; }
     bool smoothDisplay() const { return smoothDisplay_; }
+    bool viewportTextureEnabled() const { return viewportTextureEnabled_; }
     const QVector<ImageFramePtr>& frames() const { return frames_; }
 
     void setPresentationMode(int mode);
@@ -51,6 +52,7 @@ class QmlImageCanvas : public QQuickRhiItem {
     void setSynchronized(bool enabled);
     void setBackgroundColor(const QColor& color);
     void setSmoothDisplay(bool enabled);
+    void setViewportTextureEnabled(bool enabled);
     void setFrames(const QVector<ImageFramePtr>& frames, int changedSlot = -1,
                    bool resetChangedView = false);
 
@@ -115,6 +117,7 @@ class QmlImageCanvas : public QQuickRhiItem {
     int navigationRevision_ = 0;
     QColor backgroundColor_{160, 160, 160};
     bool smoothDisplay_ = true;
+    bool viewportTextureEnabled_ = false;
     QTimer hoverProbeTimer_;
     QPointer<QWindow> hoverWindow_;
     // Scene coordinates of the last probed cursor position. Events are published by the window,

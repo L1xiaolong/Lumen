@@ -1,10 +1,12 @@
 #include "io/qt_image_decoder.h"
 
 #include "io/encoded_color_management.h"
+#include "io/jpeg_stripe_cache.h"
 #include "io/metadata_reader.h"
 
 #include <QColorSpace>
 #include <QFileInfo>
+#include <QImageIOHandler>
 #include <QImageReader>
 
 #include <algorithm>
@@ -47,6 +49,36 @@ QByteArray readerFormatForSuffix(const QString& suffix) {
                                                            : QByteArrayLiteral("heif");
     }
     return suffix.toLatin1();
+}
+
+bool swapsImageAxes(const QImageReader& reader) {
+    return reader.autoTransform() &&
+           reader.transformation().testFlag(QImageIOHandler::TransformationRotate90);
+}
+
+bool isJpeg(const QByteArray& format) {
+    return format == "jpeg" || format == "jpg";
+}
+
+QSize scaledDecodeSize(QSize source, QSize maximum, bool preferNativeJpegScale) {
+    if (source.isEmpty() || maximum.isEmpty() ||
+        (source.width() <= maximum.width() && source.height() <= maximum.height())) {
+        return source;
+    }
+    const QSize target = source.scaled(maximum, Qt::KeepAspectRatio);
+    if (preferNativeJpegScale) {
+        constexpr qint64 minimumNativeScalePercent = 97;
+        for (const int divisor : {2, 4, 8}) {
+            if (source.width() % divisor != 0 || source.height() % divisor != 0) continue;
+            const QSize nativeSize(source.width() / divisor, source.height() / divisor);
+            if (nativeSize.width() <= target.width() && nativeSize.height() <= target.height() &&
+                100LL * nativeSize.width() >= minimumNativeScalePercent * target.width() &&
+                100LL * nativeSize.height() >= minimumNativeScalePercent * target.height()) {
+                return nativeSize;
+            }
+        }
+    }
+    return target;
 }
 }
 
@@ -92,7 +124,7 @@ QString QtImageDecoder::cacheIdentity() const {
         EncodedColorManagement::isAvailable()
             ? QStringLiteral("lcms-%1").arg(EncodedColorManagement::version())
             : QStringLiteral("lcms-disabled");
-    return QStringLiteral("qt-image-v7|qt-%1|formats-%2|%3|icc-%4|orientation-%5|depth-%6|display-%7")
+    return QStringLiteral("qt-image-v9|qt-%1|formats-%2|%3|icc-%4|orientation-%5|depth-%6|display-%7")
         .arg(QString::fromLatin1(qVersion()), supportedSuffixes().join(QLatin1Char(',')),
              colorIdentity,
              EncodedColorManagement::isEnabled() ? QStringLiteral("on") : QStringLiteral("off"),
@@ -121,63 +153,76 @@ DecodeResult QtImageDecoder::decode(const DecodeRequest& request) const {
     reader.setDecideFormatFromContent(false);
     QString fileFormat = QFileInfo(request.path).suffix().toUpper();
     QSize sourceSize = reader.size();
-
-    if (!request.maximumSize.isEmpty()) {
-        if (sourceSize.isValid() && (sourceSize.width() > request.maximumSize.width() ||
-                                     sourceSize.height() > request.maximumSize.height())) {
-            reader.setScaledSize(sourceSize.scaled(request.maximumSize, Qt::KeepAspectRatio));
-        }
+    bool swapAxes = sourceSize.isValid() && swapsImageAxes(reader);
+    const bool regional = request.purpose == DecodePurpose::Region;
+    if (regional && (!isJpeg(reader.format()) || request.sourceRegion.isEmpty() ||
+                     !QRect(QPoint{}, sourceSize).contains(request.sourceRegion) ||
+                     !reader.supportsOption(QImageIOHandler::ClipRect) ||
+                     (reader.autoTransform() && reader.transformation() != QImageIOHandler::TransformationNone))) {
+        return {{}, QStringLiteral("Regional JPEG decode unavailable")};
     }
 
-    const auto admit = [&request](QSize source, const QByteArray& format) {
+    const auto prepareReader = [&request, regional](QImageReader& reader, QSize source) {
         if (source.isEmpty()) return request.prepareAllocation(512LL * 1024 * 1024);
-        QSize output = source;
-        if (!request.maximumSize.isEmpty() && (source.width() > request.maximumSize.width() ||
-                                              source.height() > request.maximumSize.height()))
-            output = source.scaled(request.maximumSize, Qt::KeepAspectRatio);
+        const QByteArray format = reader.format();
+        const bool jpeg = isJpeg(format);
+        const QSize output = regional ? request.sourceRegion.size() :
+            scaledDecodeSize(source, request.maximumSize, jpeg && request.purpose == DecodePurpose::Preview);
+        if (regional) reader.setClipRect(request.sourceRegion);
+        else if (output != source) reader.setScaledSize(output);
         // PNG/JPEG/BMP have integer output up to RGBA64. Other plugins can expose
         // RGBA32F. Include native pixels even if a plugin scales after decoding,
         // and two output images for conversion/color or upload preparation.
-        const bool integerFormat = format == "png" || format == "jpeg" || format == "jpg" || format == "bmp";
+        const bool integerFormat = jpeg || format == "png" || format == "bmp";
         return request.prepareAllocation(addedAllocationBytes(
             estimatedPixelBytes(source, integerFormat ? 8 : 16),
             estimatedPixelBytes(output, integerFormat ? 16 : 32)));
     };
-    if (!admit(sourceSize, reader.format())) return {{}, QStringLiteral("Cancelled")};
-    QImage image = reader.read();
+    if (!prepareReader(reader, sourceSize)) return {{}, QStringLiteral("Cancelled")};
+    QImage image;
+#ifdef MVPVIEW_JPEG_STRIPES
+    if (request.purpose != DecodePurpose::Thumbnail && isJpeg(reader.format()) &&
+        (!reader.autoTransform() || reader.transformation() == QImageIOHandler::TransformationNone)) {
+        image = JpegStripeCache::read(request, sourceSize, reader.scaledSize());
+    }
+#endif
+    const bool fromStripes = !image.isNull();
+    if (request.isCancelled()) return {{}, QStringLiteral("Cancelled")};
+    if (!fromStripes) image = reader.read();
     if (image.isNull()) {
+        if (regional) return {{}, reader.errorString()};
         // Some camera exports keep an old extension when replacing a damaged file. Let Qt
         // inspect the signature if the suffix-selected decoder could not read its contents.
         QImageReader contentReader(request.path);
         contentReader.setAutoTransform(autoOrientationEnabled());
         contentReader.setDecideFormatFromContent(true);
         sourceSize = contentReader.size();
-        if (!request.maximumSize.isEmpty() && sourceSize.isValid() &&
-            (sourceSize.width() > request.maximumSize.width() ||
-             sourceSize.height() > request.maximumSize.height())) {
-            contentReader.setScaledSize(sourceSize.scaled(request.maximumSize, Qt::KeepAspectRatio));
-        }
-        if (!admit(sourceSize, contentReader.format())) return {{}, QStringLiteral("Cancelled")};
+        swapAxes = sourceSize.isValid() && swapsImageAxes(contentReader);
+        if (!prepareReader(contentReader, sourceSize)) return {{}, QStringLiteral("Cancelled")};
         image = contentReader.read();
         if (image.isNull()) return {{}, contentReader.errorString()};
         fileFormat = QString::fromLatin1(QImageReader::imageFormat(request.path)).toUpper();
     }
 
     if (request.isCancelled()) return {{}, QStringLiteral("Cancelled")};
+    if (regional && image.size() != request.sourceRegion.size()) {
+        return {{}, QStringLiteral("JPEG decoder did not return the requested region")};
+    }
     const bool sourceHighBitDepth = image.depth() > 32;
     const bool highBitDepth = sourceHighBitDepth && preserveHighBitDepth();
     if (highBitDepth) {
         if (image.format() != QImage::Format_RGBA64 &&
             image.format() != QImage::Format_RGBA16FPx4 &&
             image.format() != QImage::Format_RGBA32FPx4) {
-            image = image.convertToFormat(QImage::Format_RGBA64);
+            image.convertTo(QImage::Format_RGBA64);
         }
     } else if (image.format() != QImage::Format_RGBA8888) {
-        image = image.convertToFormat(QImage::Format_RGBA8888);
+        image.convertTo(QImage::Format_RGBA8888);
     }
 
     const QFileInfo fileInfo(request.path);
     auto frame = std::make_shared<ImageFrame>();
+    if (regional) frame->decodedRegion = request.sourceRegion;
     frame->descriptor.size = image.size();
     frame->descriptor.layout = PixelLayout::Interleaved;
     frame->descriptor.channelOrder = ChannelOrder::RGBA;
@@ -185,10 +230,17 @@ DecodeResult QtImageDecoder::decode(const DecodeRequest& request) const {
     frame->metadata.fileName = fileInfo.fileName();
     frame->metadata.format = fileFormat;
     frame->metadata.fileSize = fileInfo.size();
+    if (swapAxes) sourceSize.transpose();
     frame->metadata.sourceSize = sourceSize.isValid() ? sourceSize : image.size();
     frame->metadata.modifiedAt = fileInfo.lastModified();
     frame->metadata.decoderName = QStringLiteral("Qt Image Formats");
     frame->metadata.decoderVersion = QString::fromLatin1(qVersion());
+#ifdef MVPVIEW_JPEG_STRIPES
+    if (fromStripes) {
+        frame->metadata.decoderName = QStringLiteral("TurboJPEG (parallel stripes)");
+        frame->metadata.decoderVersion = QStringLiteral(MVPVIEW_TURBOJPEG_VERSION);
+    }
+#endif
     EncodedColorManagement::normalizeToDisplay(image, frame->metadata);
     frame->descriptor.sampleType =
         image.format() == QImage::Format_RGBA16FPx4 ||

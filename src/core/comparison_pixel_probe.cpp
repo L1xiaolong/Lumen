@@ -280,21 +280,22 @@ QString ComparisonPixelSample::sourceValueText() const {
         }
         return sourceRgbText;
     }
-    return encodedValueText.isEmpty() ? rgbText(displayColor) : encodedValueText;
+    const QString text = encodedValueText.isEmpty() ? rgbText(displayColor) : encodedValueText;
+    return approximate && !text.isEmpty() ? QStringLiteral("≈%1").arg(text) : text;
 }
 
 QString ComparisonPixelSample::displayValueText() const { return rgbText(displayColor); }
 
 QSize ComparisonPixelProbe::logicalFrameSize(const ImageFrame& frame) {
-    // Mirror of QmlImageCanvas' zoom/pan space: RAW/YUV planes render through the oriented source
-    // size, while QImage backed frames (encoded images, bounded RAW/YUV previews, camera RAW)
-    // render at the decoded size they carry.
     if (frame.rawParameters) {
         const QSize oriented =
             orientedImageSize(frame.rawParameters->size, frame.rawParameters->orientation);
         if (oriented.isValid()) {
             return oriented;
         }
+    }
+    if (!frame.metadata.sourceSize.isEmpty()) {
+        return frame.metadata.sourceSize;
     }
     if (!frame.descriptor.size.isEmpty()) {
         return frame.descriptor.size;
@@ -312,11 +313,8 @@ QPointF ComparisonPixelProbe::normalizedPixelCenter(const QPoint& pixel, const Q
 
 ComparisonPixelSample ComparisonPixelProbe::sample(const ImageFrame& frame,
                                                    const QPointF& normalizedPoint) {
-    const RawPlaneAccessor rawAccessor(frame);
-    const QSize logicalSize =
-        rawAccessor.isValid() ? rawAccessor.displaySize() : frame.descriptor.size;
-    const QPoint displayPixel = pixelAtNormalizedPoint(normalizedPoint, logicalSize);
-    return sampleAtDisplayPixel(frame, displayPixel);
+    const QSize logicalSize = logicalFrameSize(frame);
+    return sampleAtLogicalPixel(frame, pixelAtNormalizedPoint(normalizedPoint, logicalSize), logicalSize);
 }
 
 ComparisonPixelSample ComparisonPixelProbe::sampleAtLogicalPixel(const ImageFrame& frame,
@@ -331,10 +329,16 @@ ComparisonPixelSample ComparisonPixelProbe::sampleAtLogicalPixel(const ImageFram
         !QRect(QPoint{}, logicalSize).contains(logicalPixel)) {
         return {};
     }
+    if (!frame.decodedRegion.isEmpty()) {
+        if (!frame.decodedRegion.contains(logicalPixel)) return {};
+        ComparisonPixelSample result = sampleAtDisplayPixel(frame, logicalPixel - frame.decodedRegion.topLeft());
+        result.displayPixel = result.sourcePixel = logicalPixel;
+        return result;
+    }
     if (samplingSize == logicalSize) {
         return sampleAtDisplayPixel(frame, logicalPixel);
     }
-    // A bounded RAW/YUV preview keeps the full source size as its zoom/pan space while the probe
+    // A bounded preview keeps the full source size as its zoom/pan space while the probe
     // can only read the decoded proxy, so the hovered pixel maps proportionally instead of being
     // rejected as out of range.
     const QPoint samplingPixel(
@@ -349,6 +353,7 @@ ComparisonPixelSample ComparisonPixelProbe::sampleAtLogicalPixel(const ImageFram
         // The caller reported a coordinate in its own zoom/pan space, so it stays the pixel of
         // record while sourcePixel keeps addressing the stored plane.
         result.displayPixel = logicalPixel;
+        result.approximate = true;
     }
     return result;
 }
