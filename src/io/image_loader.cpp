@@ -373,8 +373,11 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
     inFlight.workingPriority = std::make_shared<std::atomic_int>(priority);
     inFlight.purpose = request.purpose;
     inFlight.viewportPriorityKnown = !viewports_.isEmpty();
-    inFlight.serialized = !request.metadataSource && !thumbnailSource &&
+    // Resizing a cached preview does not enter the decoder's serialized pool.
+    // Retain the dispatch decision so completion returns the same worker slot.
+    const bool serialized = !request.metadataSource && !thumbnailSource &&
         decoder_->executionMode(request.path) == DecodeExecutionMode::Serialized;
+    inFlight.serialized = serialized;
     inFlight.queuedAt.start();
     request.activeConsumers = activeConsumers;
     request.sourceCache = sourceCache_;
@@ -424,7 +427,7 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
     inFlight_[key].work =
         [self, decoder, diskCache, request = std::move(request), key, keyPrefix, decoderIdentity, generation,
          activeConsumers, pendingWrites, resultBufferBudget, decodeWorkingBudget, workingPriority, residentAccounting,
-         obsoletePreviewPrefixes, coveringPreviewPrefixes, coveringFullPrefix,
+         obsoletePreviewPrefixes, coveringPreviewPrefixes, coveringFullPrefix, serialized,
          thumbnailSource = std::move(thumbnailSource)]() mutable {
             std::shared_ptr<ResultBufferBudget::Reservation> workingReservation;
             qint64 workingWaitMs = 0;
@@ -671,7 +674,7 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
                             break;
                         }
                     }
-                }, serialized = !request.metadataSource && decoder->executionMode(request.path) == DecodeExecutionMode::Serialized]() mutable {
+                }, serialized]() mutable {
                     if (!self) return;
                     if (serialized) --self->serializedRunning_;
                     else --self->parallelRunning_;
