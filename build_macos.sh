@@ -122,7 +122,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
 command -v brew >/dev/null 2>&1 || {
-    echo "Homebrew is required for LibRaw and Exiv2; install both libraries first." >&2
+    echo "Homebrew is required for the image libraries; see the build dependencies in README.md." >&2
     exit 1
 }
 brew_prefix="$(brew --prefix)"
@@ -286,7 +286,7 @@ cmake \
 
 # macdeployqt handles Qt, but third-party dylibs must be copied explicitly.
 # Follow the Homebrew dependency graph until every referenced library is staged.
-echo "Bundling LibRaw, Exiv2, and their runtime dependencies"
+echo "Bundling third-party image libraries and their runtime dependencies"
 while :; do
     copied_dependency=0
     while IFS= read -r -d '' macho_binary; do
@@ -338,7 +338,7 @@ while :; do
                   -type f -print0)
     [[ "$copied_dependency" -eq 1 ]] || break
 done
-for library_pattern in 'libraw*.dylib' 'libexiv2*.dylib'; do
+for library_pattern in 'libraw*.dylib' 'libexiv2*.dylib' 'libjxl.*.dylib' 'libOpenEXR-*.dylib'; do
     if [[ -z "$(find "$staged_app/Contents/Frameworks" -maxdepth 1 \
         -name "$library_pattern" -type f -print -quit)" ]]; then
         echo "Required image library was not bundled: $library_pattern" >&2

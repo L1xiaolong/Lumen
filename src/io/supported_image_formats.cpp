@@ -1,5 +1,6 @@
 #include "io/supported_image_formats.h"
 
+#include "io/jxl_exr_decoder.h"
 #include "io/camera_raw_decoder.h"
 #include "io/qt_image_decoder.h"
 
@@ -11,6 +12,7 @@ namespace mvpview {
 
 QStringList supportedImageSuffixes() {
     QStringList suffixes = QtImageDecoder::supportedSuffixes();
+    suffixes.append(JxlExrDecoder::supportedSuffixes());
     suffixes.append({QStringLiteral("raw"), QStringLiteral("yuv")});
     suffixes.append(CameraRawDecoder::supportedSuffixes());
     suffixes.removeDuplicates();

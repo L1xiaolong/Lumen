@@ -8,9 +8,10 @@ covered by the project's [MIT license](LICENSE). The application does not embed 
 
 ## Other runtime dependencies
 
-Qt, Exiv2, LibRaw, libjpeg-turbo, and any enabled LittleCMS or transitive runtime dependencies
-retain their respective licenses. This document is not a complete runtime
-license inventory. Packaged builds additionally contain
+Qt, Exiv2, LibRaw, libjpeg-turbo, [libjxl](https://github.com/libjxl/libjxl),
+[OpenEXR](https://github.com/AcademySoftwareFoundation/openexr), and any enabled LittleCMS
+or transitive runtime dependencies retain their respective licenses. This document is not a complete
+runtime license inventory. Packaged builds additionally contain
 `RUNTIME_DEPENDENCIES.json`, `RUNTIME_DEPENDENCIES.md`, and the collected
 evidence under `licenses/runtime/`. This records the actual deployed files
 and available notices, not a complete compatibility or source-delivery approval.

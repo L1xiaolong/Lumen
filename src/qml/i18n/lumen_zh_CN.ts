@@ -3921,6 +3921,10 @@ Returned to the previous folder.</source>
 <context>
     <name>FileOperations</name>
     <message>
+        <source>This image format is read-only.</source>
+        <translation>此图片格式仅支持读取。</translation>
+    </message>
+    <message>
         <source>An image operation is in progress. Please wait.</source>
         <translation>正在处理图片，请稍候。</translation>
     </message>

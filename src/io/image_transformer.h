@@ -15,6 +15,7 @@ enum class QuarterTurn { Clockwise, CounterClockwise };
 // QSaveFile so a failed encode or interrupted write never leaves a partially written image.
 class ImageTransformer final {
   public:
+    [[nodiscard]] static bool supportsEditing(const QString& path);
     [[nodiscard]] static QString rotate(const QString& path, QuarterTurn direction,
                                         const std::optional<RawImageParameters>& raw = {});
     [[nodiscard]] static QString resize(const QString& path, const QSize& size,

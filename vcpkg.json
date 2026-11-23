@@ -6,6 +6,8 @@
   "dependencies": [
     { "name": "libraw", "default-features": false },
     { "name": "libjpeg-turbo", "default-features": false },
+    { "name": "libjxl", "default-features": false },
+    { "name": "openexr", "default-features": false },
     { "name": "exiv2", "default-features": false, "features": ["png", "xmp"] }
   ],
   "features": {

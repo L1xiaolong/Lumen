@@ -218,7 +218,9 @@ Translations=translations
 
     foreach ($dependency in @(
         @{ Name = "Exiv2"; Pattern = "*exiv2*.dll" },
-        @{ Name = "LibRaw"; Pattern = "*raw*.dll" }
+        @{ Name = "LibRaw"; Pattern = "*raw*.dll" },
+        @{ Name = "JPEG XL"; Pattern = "*jxl.dll" },
+        @{ Name = "OpenEXR"; Pattern = "*OpenEXR*.dll" }
     )) {
         $runtimeDll = Get-ChildItem -LiteralPath $stageDir -Filter $dependency.Pattern -File |
             Select-Object -First 1

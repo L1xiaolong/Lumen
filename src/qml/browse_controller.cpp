@@ -535,7 +535,9 @@ bool BrowseController::canEditRaw() const {
 }
 
 bool BrowseController::canTransform() const {
-    return transformingPath.isEmpty() && selectedImagePaths().size() == 1;
+    if (!transformingPath.isEmpty()) return false;
+    const auto paths = selectedImagePaths();
+    return paths.size() == 1 && ImageTransformer::supportsEditing(paths.first());
 }
 
 bool BrowseController::canRestoreSelected() const {

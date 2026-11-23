@@ -100,7 +100,7 @@ jobs:
 
       - name: Install image libraries (macOS)
         if: runner.os == 'macOS'
-        run: brew install libraw exiv2 jpeg-turbo pkgconf
+        run: brew install libraw exiv2 jpeg-turbo jpeg-xl openexr pkgconf
 
       - name: Set up MSYS2/UCRT64
         if: runner.os == 'Windows'
@@ -121,6 +121,8 @@ jobs:
             mingw-w64-ucrt-x86_64-libraw
             mingw-w64-ucrt-x86_64-exiv2
             mingw-w64-ucrt-x86_64-libjpeg-turbo
+            mingw-w64-ucrt-x86_64-libjxl
+            mingw-w64-ucrt-x86_64-openexr
             mingw-w64-ucrt-x86_64-python
             zip
             unzip
@@ -234,6 +236,8 @@ jobs:
           ./scripts/deploy_msys2_runtime.sh "$package_directory"
           test -n "$(find "$package_directory" -maxdepth 1 -iname 'libexiv2*.dll' -print -quit)"
           test -n "$(find "$package_directory" -maxdepth 1 -iname 'libraw*.dll' -print -quit)"
+          test -n "$(find "$package_directory" -maxdepth 1 -iname 'libjxl.dll' -print -quit)"
+          test -n "$(find "$package_directory" -maxdepth 1 -iname '*OpenEXR-*.dll' -print -quit)"
           cmake "-DNOTICE_DESTINATION=$package_directory" -P scripts/package_licenses.cmake
           if ! python scripts/collect_runtime_licenses.py "$package_directory" \
             --msys-root "$(cygpath -m /)"; then

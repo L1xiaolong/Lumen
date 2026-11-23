@@ -1,5 +1,6 @@
 #include "io/image_transformer.h"
 
+#include "io/jxl_exr_decoder.h"
 #include "io/metadata_writer.h"
 #include "io/raw_preset_store.h"
 
@@ -518,8 +519,14 @@ QString ImageTransformer::ensureBackup(const QString& path) {
     return {};
 }
 
+bool ImageTransformer::supportsEditing(const QString& path) {
+    return !JxlExrDecoder::supportsPath(path);
+}
+
 QString ImageTransformer::rotate(const QString& path, QuarterTurn direction,
                                  const std::optional<RawImageParameters>& raw) {
+    if (!supportsEditing(path))
+        return QCoreApplication::translate("FileOperations", "This image format is read-only.");
     const bool createdBackup = !canRestore(path);
     if (const QString error = ensureBackup(path); !error.isEmpty()) return error;
     if (raw && !QFileInfo::exists(RawPresetStore::sidecarPath(backupPath(path)))) {
@@ -554,6 +561,8 @@ QString ImageTransformer::rotate(const QString& path, QuarterTurn direction,
 
 QString ImageTransformer::resize(const QString& path, const QSize& size,
                                  const std::optional<RawImageParameters>& raw) {
+    if (!supportsEditing(path))
+        return QCoreApplication::translate("FileOperations", "This image format is read-only.");
     if (!size.isValid()) return QCoreApplication::translate("FileOperations", "Width and height must be greater than zero.");
     if (static_cast<qint64>(size.width()) * size.height() > 250'000'000)
         return QCoreApplication::translate("FileOperations", "The requested image exceeds the 250-megapixel safety limit.");

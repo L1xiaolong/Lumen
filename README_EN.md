@@ -30,6 +30,7 @@
 
 - **360° panorama preview** detects equirectangular JPEGs with GPano metadata and streams tiles for single-scan images up to 32K wide. Set horizontal and vertical FOV independently, turn with the arrow keys, zoom with the wheel, click the overview to reposition, and hover to read source coordinates and RGB values.
 - **Camera RAW / YUV / headerless RAW support**: Browse Canon CR2, CR3 (including C-RAW), and DNG directly. Lumen also supports Bayer RAW10/12/16 and NV12 / NV21 / I420 / P010.
+- **JPEG XL and OpenEXR viewing** includes thumbnails, full-screen viewing, and comparison. Lumen shows the first JPEG XL animation frame and the first readable flat RGB or luminance OpenEXR image. OpenEXR linear colors are converted to the current display color space. Both formats are read-only.
 - **Cross-folder comparison**: Open 2–4 folders at once and start synchronized comparison with one click, without switching back and forth or copying files.
 - **Fast decoding, smooth viewing**: Asynchronous decoding, staged previews, and thumbnail caching keep browsing, switching images, and viewing large images responsive.
 - **Lightweight and focused**: Built around browsing, selecting, and comparing images, with common actions close at hand. Supports synchronized zoom and pan, sliding splits, and A/B comparison.
@@ -97,6 +98,7 @@ These dependencies are needed only when **building from source**. The repository
 | Qt | 6.9+; Core, Gui, Network, Quick, QuickControls2, QuickLayouts, QuickTemplates2, Svg, ShaderTools, LinguistTools, and **Gui private development headers matching the Qt version** |
 | LibRaw / Exiv2 | LibRaw 0.21+ and Exiv2 0.28+ for camera RAW decoding and metadata reading |
 | libjpeg-turbo | 3.1.2+ for scaled JPEG decoding and panorama tiles |
+| libjxl / OpenEXR | JPEG XL and OpenEXR decoding, with OpenEXR 3.3+ |
 | LittleCMS | Optional, 2.x; enables ICC color management and is automatically disabled if unavailable |
 | Packaging tools | Python 3.9+; `macdeployqt` and system signing/DMG tools on macOS, `windeployqt` and NSIS on Windows |
 
@@ -114,7 +116,7 @@ cd Lumen
 After installing Homebrew and Xcode Command Line Tools:
 
 ```sh
-brew install cmake qt libraw exiv2 jpeg-turbo little-cms2 pkgconf
+brew install cmake qt libraw exiv2 jpeg-turbo jpeg-xl openexr little-cms2 pkgconf
 ./build_macos.sh release
 
 # Create a DMG and ZIP with runtime dependencies in dist/
@@ -148,6 +150,7 @@ pacman -S --needed \
   mingw-w64-ucrt-x86_64-qt6-tools \
   mingw-w64-ucrt-x86_64-libraw mingw-w64-ucrt-x86_64-exiv2 \
   mingw-w64-ucrt-x86_64-libjpeg-turbo \
+  mingw-w64-ucrt-x86_64-libjxl mingw-w64-ucrt-x86_64-openexr \
   mingw-w64-ucrt-x86_64-lcms2 mingw-w64-ucrt-x86_64-python \
   mingw-w64-ucrt-x86_64-nsis
 ```
