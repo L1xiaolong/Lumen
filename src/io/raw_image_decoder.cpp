@@ -272,7 +272,7 @@ QImage convertYuv(YuvSampleSource& source, const RawImageParameters& parameters,
 } // namespace
 
 QString RawImageDecoder::cacheIdentity() const {
-    return QStringLiteral("headerless-raw-v5|display-%1")
+    return QStringLiteral("headerless-raw-v6|display-%1")
         .arg(displayColorSpaceKey(currentDisplayColorSpace()));
 }
 

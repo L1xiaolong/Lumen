@@ -88,6 +88,8 @@ QImage convertBayer(const QByteArray& bytes, const RawImageParameters& parameter
     const int maximum = parameters.whiteLevel > parameters.blackLevel
                             ? parameters.whiteLevel
                             : parameters.maximumSampleValue();
+    const auto& gains = parameters.whiteBalanceGains;
+    const double commonWhite = *std::min_element(gains.begin(), gains.end());
     auto normalized = [&](int x, int y) {
         const int raw = packedBayerValue(bytes, parameters, x, y).value_or(0);
         return std::clamp((raw - parameters.blackLevel) /
@@ -125,6 +127,7 @@ QImage convertBayer(const QByteArray& bytes, const RawImageParameters& parameter
                 continue;
             }
             double channels[3]{};
+            double peaks[3]{};
             int counts[3]{};
             const int radius = bayerSampleBlockSize(parameters.bayerSampling);
             for (int dy = -radius; dy <= radius; ++dy) {
@@ -133,14 +136,34 @@ QImage convertBayer(const QByteArray& bytes, const RawImageParameters& parameter
                     const int sy = std::clamp(centerY + dy, 0, height - 1);
                     const int channel = cfaChannel(parameters.bayerPattern,
                                                    parameters.bayerSampling, sx, sy);
-                    channels[channel] += normalized(sx, sy);
+                    const double sample = normalized(sx, sy);
+                    channels[channel] += sample;
+                    peaks[channel] = std::max(peaks[channel], sample);
                     ++counts[channel];
                 }
             }
             std::array<double, 3> balanced{};
             for (std::size_t channel = 0; channel < balanced.size(); ++channel) {
                 const double linear = counts[channel] > 0 ? channels[channel] / counts[channel] : 0;
-                balanced[channel] = linear * parameters.whiteBalanceGains[channel];
+                balanced[channel] = linear * gains[channel];
+            }
+            const double rawPeak = std::max({peaks[0], peaks[1], peaks[2]});
+            if (rawPeak > 0.90) {
+                // Match limitBayerHighlights() in the shaders. Peaks retain evidence of
+                // clipping when demosaicing averages a bright edge with darker samples.
+                const double lowestPeak = std::min({peaks[0] * gains[0], peaks[1] * gains[1],
+                                                    peaks[2] * gains[2]});
+                const double highlight = std::min(rawPeak, lowestPeak / commonWhite);
+                // Some sensors saturate slightly below the declared white level.
+                const double t = std::clamp((highlight - 0.90) / (0.95 - 0.90), 0.0, 1.0);
+                const double strength = t * t * (3.0 - 2.0 * t);
+                const double ceiling = commonWhite * rawPeak;
+                const double neutral = (std::min(balanced[0], ceiling) +
+                                        std::min(balanced[1], ceiling) +
+                                        std::min(balanced[2], ceiling)) / 3.0;
+                for (double& channel : balanced) {
+                    channel = std::lerp(channel, neutral, strength);
+                }
             }
             for (std::size_t outputChannel = 0; outputChannel < balanced.size(); ++outputChannel) {
                 double corrected = 0.0;

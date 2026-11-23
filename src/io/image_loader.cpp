@@ -410,6 +410,17 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
                 coveringPreviewPrefixes.append(cacheKeyPrefix(candidate, sourceInfo.absolutePath, sourceInfo.size, sourceInfo.modifiedMs));
         }
     }
+    if (request.rawParameters && !isHeaderlessImage(request.path)) {
+        // Keep discovered defaults in the cache key, but let the camera decoder
+        // recompute them when unpacking reveals more about the sensor.
+        const QReadLocker lock(&rawParametersLock_);
+        const auto defaults = rawParameters_.constFind(sourceInfo.absolutePath);
+        if (defaults != rawParameters_.cend() &&
+            !rawParameterRevisions_.contains(sourceInfo.absolutePath) &&
+            defaults->cacheKey() == request.rawParameters->cacheKey()) {
+            request.rawParameters.reset();
+        }
+    }
     inFlight_[key].work =
         [self, decoder, diskCache, request = std::move(request), key, keyPrefix, decoderIdentity, generation,
          activeConsumers, pendingWrites, resultBufferBudget, decodeWorkingBudget, workingPriority, residentAccounting,

@@ -1,4 +1,7 @@
 #version 440
+#extension GL_GOOGLE_include_directive : require
+
+#include "bayer_highlights.glsl"
 
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 fragColor;
@@ -97,6 +100,7 @@ void main() {
         return;
     }
     vec3 sums = vec3(0.0);
+    vec3 peaks = vec3(0.0);
     vec3 counts = vec3(0.0);
     int radius = int(round(imageAndStorage.z));
     for (int dy = -2; dy <= 2; ++dy) {
@@ -105,6 +109,7 @@ void main() {
             ivec2 samplePixel = clamp(center + ivec2(dx, dy), ivec2(0), imageSize - ivec2(1));
             int channel = cfaChannel(samplePixel);
             float sampleValue = normalizedRaw(samplePixel);
+            peaks[channel] = max(peaks[channel], sampleValue);
             if (channel == 0) {
                 sums.x += sampleValue;
                 counts.x += 1.0;
@@ -117,7 +122,7 @@ void main() {
             }
         }
     }
-    vec3 balanced = (sums / max(counts, vec3(1.0))) * whiteBalance.rgb;
+    vec3 balanced = limitBayerHighlights(sums / max(counts, vec3(1.0)), peaks, whiteBalance.rgb);
     vec3 corrected = clamp(colorCorrection * balanced, 0.0, 1.0);
     vec3 encoded = pow(corrected, vec3(1.0 / levelsAndGamma.z));
     fragColor = vec4(encoded, 1.0);

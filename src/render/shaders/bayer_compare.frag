@@ -1,4 +1,7 @@
 #version 440
+#extension GL_GOOGLE_include_directive : require
+
+#include "bayer_highlights.glsl"
 
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 fragColor;
@@ -148,6 +151,7 @@ vec3 primaryDisplayRgb(vec2 displayUv) {
                     channel == 2 ? encoded : 0.0);
     }
     vec3 sums = vec3(0.0);
+    vec3 peaks = vec3(0.0);
     vec3 counts = vec3(0.0);
     int radius = int(round(primaryImageAndStorage.z));
     for (int dy = -2; dy <= 2; ++dy) {
@@ -156,6 +160,7 @@ vec3 primaryDisplayRgb(vec2 displayUv) {
             ivec2 pixel = clamp(center + ivec2(dx, dy), ivec2(0), size - ivec2(1));
             int channel = cfaChannel(pixel, int(round(primaryLayoutFlags.x)), radius);
             float sampleValue = primaryDisplayValue(pixel);
+            peaks[channel] = max(peaks[channel], sampleValue);
             if (channel == 0) {
                 sums.x += sampleValue;
                 counts.x += 1.0;
@@ -168,7 +173,7 @@ vec3 primaryDisplayRgb(vec2 displayUv) {
             }
         }
     }
-    vec3 balanced = (sums / max(counts, vec3(1.0))) * primaryWhiteBalance.rgb;
+    vec3 balanced = limitBayerHighlights(sums / max(counts, vec3(1.0)), peaks, primaryWhiteBalance.rgb);
     vec3 corrected = clamp(primaryColorCorrection * balanced, 0.0, 1.0);
     return pow(corrected, vec3(1.0 / primaryLevelsAndGamma.z));
 }
@@ -186,6 +191,7 @@ vec3 candidateDisplayRgb(vec2 displayUv) {
                     channel == 2 ? encoded : 0.0);
     }
     vec3 sums = vec3(0.0);
+    vec3 peaks = vec3(0.0);
     vec3 counts = vec3(0.0);
     int radius = int(round(candidateImageAndStorage.z));
     for (int dy = -2; dy <= 2; ++dy) {
@@ -194,6 +200,7 @@ vec3 candidateDisplayRgb(vec2 displayUv) {
             ivec2 pixel = clamp(center + ivec2(dx, dy), ivec2(0), size - ivec2(1));
             int channel = cfaChannel(pixel, int(round(candidateLayoutFlags.x)), radius);
             float sampleValue = candidateDisplayValue(pixel);
+            peaks[channel] = max(peaks[channel], sampleValue);
             if (channel == 0) {
                 sums.x += sampleValue;
                 counts.x += 1.0;
@@ -206,7 +213,7 @@ vec3 candidateDisplayRgb(vec2 displayUv) {
             }
         }
     }
-    vec3 balanced = (sums / max(counts, vec3(1.0))) * candidateWhiteBalance.rgb;
+    vec3 balanced = limitBayerHighlights(sums / max(counts, vec3(1.0)), peaks, candidateWhiteBalance.rgb);
     vec3 corrected = clamp(candidateColorCorrection * balanced, 0.0, 1.0);
     return pow(corrected, vec3(1.0 / candidateLevelsAndGamma.z));
 }

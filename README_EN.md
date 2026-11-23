@@ -28,8 +28,8 @@
 
 ## Features
 
-- **360° panorama preview** detects equirectangular JPEGs with GPano metadata and streams tiles for single-scan images up to 32K wide. Possible panoramas have a `360` thumbnail badge and can be toggled with `V` in full screen. Set horizontal and vertical FOV independently, turn with the arrow keys, zoom with the wheel, click the overview to reposition, and hover to read source coordinates and RGB values.
-- **YUV / DNG / headerless RAW support**: Open images without converting them first. Supports camera RAW, Bayer RAW10/12/16, and NV12 / NV21 / I420 / P010.
+- **360° panorama preview** detects equirectangular JPEGs with GPano metadata and streams tiles for single-scan images up to 32K wide. Set horizontal and vertical FOV independently, turn with the arrow keys, zoom with the wheel, click the overview to reposition, and hover to read source coordinates and RGB values.
+- **Camera RAW / YUV / headerless RAW support**: Browse Canon CR2, CR3 (including C-RAW), and DNG directly. Lumen also supports Bayer RAW10/12/16 and NV12 / NV21 / I420 / P010.
 - **Cross-folder comparison**: Open 2–4 folders at once and start synchronized comparison with one click, without switching back and forth or copying files.
 - **Fast decoding, smooth viewing**: Asynchronous decoding, staged previews, and thumbnail caching keep browsing, switching images, and viewing large images responsive.
 - **Lightweight and focused**: Built around browsing, selecting, and comparing images, with common actions close at hand. Supports synchronized zoom and pan, sliding splits, and A/B comparison.
