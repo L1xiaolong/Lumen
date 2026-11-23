@@ -352,6 +352,10 @@ Item {
     AppMenu {
         id: fullScreenContextMenu
         objectName: "fullScreenContextMenu"
+        // Menu.visible opens the popup. Hide the submenu's entry in its parent instead.
+        delegate: AppMenuItem {
+            visible: subMenu !== scaleMenu || !root.panoramaActive
+        }
         // Menus can leave focus on their transient popup window after dismissal,
         // notably on macOS. Restore it so the page keeps receiving Escape and
         // navigation shortcuts.
@@ -391,7 +395,7 @@ Item {
             onTriggered: root.controller.setPanoramaEnabled(!root.panoramaActive)
         }
         AppMenu {
-            visible: !root.panoramaActive
+            id: scaleMenu
             title: qsTr("Scale")
             objectName: "fullScreenScaleMenu"
             AppMenuItem {
