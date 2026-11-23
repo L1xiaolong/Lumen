@@ -444,6 +444,7 @@ QString Service::maintain(bool clearHistory) {
         std::lock_guard lock(d.statusMutex);
         pendingPrevious = d.previous;
     }
+    bool checkedPrevious = !pendingPrevious.isEmpty() || clearHistory;
     for (const auto& info : sessions) {
         if (!sessionName(info.fileName()) || info.absoluteFilePath() == d.dir) continue;
         QLockFile session(info.absoluteFilePath() + QStringLiteral("/active.lock")); session.setStaleLockTime(0);
@@ -455,10 +456,14 @@ QString Service::maintain(bool clearHistory) {
         const auto meta = readObject(info.absoluteFilePath() + QStringLiteral("/session.json"));
         const auto started = QDateTime::fromString(meta.value(QStringLiteral("started")).toString(), Qt::ISODateWithMs);
         const qint64 age = started.isValid() ? started.daysTo(QDateTime::currentDateTimeUtc()) : 31;
-        if (pendingPrevious.isEmpty() && !QFileInfo::exists(info.absoluteFilePath() + QStringLiteral("/noticed.json")) &&
-            (crash || !QFileInfo::exists(info.absoluteFilePath() + QStringLiteral("/closed.json")))) {
-            pendingPrevious = crash ? QStringLiteral("crash") : QStringLiteral("unclean");
-            save(info.absoluteFilePath() + QStringLiteral("/noticed.json"), json({{"noticed", now()}}));
+        if (!checkedPrevious) {
+            // Only the newest ended session can explain a previous-exit notice.
+            checkedPrevious = true;
+            if (!QFileInfo::exists(info.absoluteFilePath() + QStringLiteral("/noticed.json")) &&
+                (crash || !QFileInfo::exists(info.absoluteFilePath() + QStringLiteral("/closed.json")))) {
+                pendingPrevious = crash ? QStringLiteral("crash") : QStringLiteral("unclean");
+                save(info.absoluteFilePath() + QStringLiteral("/noticed.json"), json({{"noticed", now()}}));
+            }
         }
         const qint64 bytes = sizeOf(info.absoluteFilePath());
         bool remove = clearHistory;
@@ -499,8 +504,9 @@ QString Service::snapshot(const QString& destination, int days, bool includeDump
     for (const auto& info : sessions) {
         if (cancelled()) return QStringLiteral("Export cancelled");
         if (!sessionName(info.fileName())) continue;
+        const bool currentSession = info.absoluteFilePath() == d.dir;
         std::unique_ptr<QLockFile> lock;
-        if (info.absoluteFilePath() != d.dir) {
+        if (!currentSession) {
             lock = std::make_unique<QLockFile>(info.absoluteFilePath() + QStringLiteral("/active.lock"));
             lock->setStaleLockTime(0);
             if (!lock->tryLock()) {
@@ -521,7 +527,7 @@ QString Service::snapshot(const QString& destination, int days, bool includeDump
             if (file.fileName() != QStringLiteral("active.lock") && file.fileName() != QStringLiteral("noticed.json"))
                 latest = qMax(latest, file.lastModified().toUTC());
         }
-        if (info.absoluteFilePath() != impl_->dir && cutoff.isValid() && latest < cutoff
+        if (!currentSession && cutoff.isValid() && latest < cutoff
             && !(capturedAt.isValid() && capturedAt >= cutoff)) continue;
         int partialRecords = 0;
         const QString dest = destination + QLatin1Char('/') + info.fileName();
@@ -565,10 +571,13 @@ QString Service::snapshot(const QString& destination, int days, bool includeDump
         }
         const bool crashDumpAvailable = hasDump(info.absoluteFilePath());
         const auto crashSummary = dumpSummary(info.absoluteFilePath());
+        const auto metadata = readObject(info.absoluteFilePath() + QStringLiteral("/session.json"));
+        const bool cleanExit = QFileInfo::exists(info.absoluteFilePath() + QStringLiteral("/closed.json"));
         const QByteArray summaryBytes = json({{"session", info.fileName()},
-                  {"version", MVPVIEW_PROJECT_VERSION}, {"build", MVPVIEW_BUILD_ID},
+                  {"version", metadata.value(QStringLiteral("version"))},
+                  {"build", metadata.value(QStringLiteral("build"))},
                   {"crashDumpAvailable", crashDumpAvailable}, {"crash", crashSummary}, {"dumpIncluded", includeDumps && dumpInRange && !captured.isEmpty()}, {"partialLogRecordsSkipped", partialRecords},
-                  {"cleanExit", QFileInfo::exists(info.absoluteFilePath() + QStringLiteral("/closed.json"))}});
+                  {"active", currentSession && !cleanExit}, {"cleanExit", cleanExit}});
         // The snapshot is private until export finishes, so these files need no
         // atomic rename or temporary sibling for every retained session.
         if (!saveSnapshot(dest + QStringLiteral("/summary.json"), summaryBytes))

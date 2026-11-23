@@ -26,9 +26,8 @@ size_t readZip(void* opaque, mz_uint64 offset, void* data, size_t count) {
 }
 DiagnosticsController::DiagnosticsController(diagnostics::Service& service, QObject* parent)
     : QObject(parent), service_(service) {
-    // The first scan runs without maintenance: Service already performed it while detecting the
-    // previous session, and re-walking the store here would only delay the first window.
-    scheduleScan(false);
+    // Detect the previous exit on the background worker as soon as diagnostics is available.
+    scheduleScan(true);
     timer_.setInterval(60000);
     connect(&timer_, &QTimer::timeout, this, [this] { if (!busy_) scheduleScan(true); });
     timer_.start();

@@ -56,8 +56,8 @@ public:
     QString crashStatus() const;
     // True while crash capture is configured for this session and its helper is still running.
     bool crashCaptureAlive() const;
-    // True when the previous session ended without writing its clean-exit marker. Updated by
-    // maintain(), which may run on a worker thread.
+    // "crash" or "unclean" when the previous ended session needs a notice, otherwise empty.
+    // Updated by maintain(), which may run on a worker thread.
     QString previousExit() const;
     bool crashEnabled() const;
     qint64 diskUsage() const;
