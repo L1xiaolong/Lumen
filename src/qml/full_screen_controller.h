@@ -2,6 +2,9 @@
 
 #include "core/image_types.h"
 #include "io/image_loader.h"
+#include "io/panorama_source.h"
+
+#include <QCache>
 
 #include <QObject>
 #include <QPointer>
@@ -11,6 +14,7 @@
 namespace mvpview {
 
 class QmlImageCanvas;
+class PanoramaCanvas;
 struct ViewState;
 
 // Owns a full-screen viewing session while the QML page owns every visual and interaction
@@ -30,6 +34,8 @@ class FullScreenController final : public QObject {
     Q_PROPERTY(bool canGoNext READ canGoNext NOTIFY stateChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY stateChanged)
     Q_PROPERTY(QString errorText READ errorText NOTIFY stateChanged)
+    Q_PROPERTY(bool panoramaAvailable READ panoramaAvailable NOTIFY stateChanged)
+    Q_PROPERTY(bool panoramaEnabled READ panoramaEnabled NOTIFY stateChanged)
 
   public:
     explicit FullScreenController(ImageLoader* loader, QObject* parent = nullptr);
@@ -48,10 +54,14 @@ class FullScreenController final : public QObject {
     }
     [[nodiscard]] bool loading() const { return loading_; }
     [[nodiscard]] QString errorText() const { return errorText_; }
+    [[nodiscard]] bool panoramaAvailable() const { return panoramaInfo_.canPreview; }
+    [[nodiscard]] bool panoramaEnabled() const { return panoramaEnabled_; }
 
     Q_INVOKABLE void open(const QStringList& paths, int initialIndex);
     Q_INVOKABLE void closeSession();
     Q_INVOKABLE void attachCanvas(QObject* canvas);
+    Q_INVOKABLE void attachPanorama(QObject* canvas);
+    Q_INVOKABLE void setPanoramaEnabled(bool enabled);
     Q_INVOKABLE void showPrevious();
     Q_INVOKABLE void showNext();
     Q_INVOKABLE void fitImage();
@@ -69,6 +79,9 @@ class FullScreenController final : public QObject {
 
   private:
     void showIndex(int index);
+    void applyPanoramaProbe(const QString& path, const PanoramaInfo& info);
+    void startFlatPreview(const QString& path, quint64 generation);
+    void cancelImageRequests();
     void requestPreview(const QString& path, quint64 generation, QSize size, bool quick);
     void scheduleFullFrame(const QString& path, quint64 generation);
     void updateZoomDetail(const ViewState& state, bool force = false);
@@ -79,6 +92,12 @@ class FullScreenController final : public QObject {
 
     ImageLoader* loader_ = nullptr;
     QPointer<QmlImageCanvas> canvas_;
+    QPointer<PanoramaCanvas> panorama_;
+    QCache<QString, PanoramaInfo> panoramaProbes_{96};
+    QCache<QString, bool> panoramaOverrides_{96};
+    PanoramaInfo panoramaInfo_;
+    QString panoramaKey_;
+    bool panoramaEnabled_ = false;
     QStringList paths_;
     int currentIndex_ = -1;
     quint64 generation_ = 0;

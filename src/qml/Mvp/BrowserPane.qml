@@ -274,6 +274,7 @@ Rectangle {
             required property string technicalLabel
             required property string fileType
             required property var dimensions
+            required property bool panoramaCandidate
             required property int bitDepth
             required property string fileSizeText
             required property url thumbnailUrl
@@ -298,6 +299,7 @@ Rectangle {
                 technicalLabel: parent.technicalLabel
                 fileType: parent.fileType
                 dimensions: parent.dimensions
+                panoramaCandidate: parent.panoramaCandidate
                 bitDepth: parent.bitDepth
                 fileSizeText: parent.fileSizeText
                 requestThumbnail: parent.thumbnailDemand

@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
 import "../Mvp"
 
 Item {
@@ -22,6 +21,10 @@ Item {
     property bool thumbnailVisible: true
     property bool pixelValueVisible: true
     readonly property var imageCanvas: canvasLoader.item
+    readonly property var panoramaCanvas: panoramaLoader.item
+    readonly property bool panoramaActive: root.controller.panoramaEnabled
+    readonly property string imageError: panoramaActive
+        ? (panoramaCanvas ? panoramaCanvas.errorText : "") : controller.errorText
     property Item messageParent: root
     property bool loadingMessageVisible: false
     readonly property bool imageLoading: root.visible && root.controller.loading
@@ -43,7 +46,10 @@ Item {
     readonly property string resolutionText:
         controller.imageSize && controller.imageSize.width > 0 && controller.imageSize.height > 0
             ? controller.imageSize.width + "*" + controller.imageSize.height : "—*—"
-    readonly property string zoomText: navigationData.zoom || "—%"
+    readonly property string zoomText: panoramaActive
+        ? (panoramaCanvas ? Math.round(panoramaCanvas.horizontalFieldOfView) + "° × "
+                            + Math.round(panoramaCanvas.verticalFieldOfView) + "°" : "")
+        : (navigationData.zoom || "—%")
 
     signal closeRequested()
 
@@ -85,21 +91,80 @@ Item {
         !fullScreenContextMenu.visible && !shortcutContext.textInputFocused
 
     Shortcut { enabled: root.imageShortcutsEnabled; sequence: "Esc"; onActivated: root.closeRequested() }
-    Shortcut { enabled: root.imageShortcutsEnabled; sequence: "Left"; onActivated: root.controller.showPrevious() }
-    Shortcut { enabled: root.imageShortcutsEnabled; sequences: ["Right", "Space"]; onActivated: root.controller.showNext() }
+    Shortcut { enabled: root.imageShortcutsEnabled; sequence: "Left"; onActivated: {
+        if (root.panoramaActive && root.panoramaCanvas) root.panoramaCanvas.turn(-1, 0)
+        else root.controller.showPrevious()
+    } }
+    Shortcut { enabled: root.imageShortcutsEnabled; sequence: "Right"; onActivated: {
+        if (root.panoramaActive && root.panoramaCanvas) root.panoramaCanvas.turn(1, 0)
+        else root.controller.showNext()
+    } }
+    Shortcut { enabled: root.imageShortcutsEnabled; sequence: "Space"; onActivated: root.controller.showNext() }
     Shortcut { enabled: root.imageShortcutsEnabled; sequence: "F"; onActivated: root.controller.fitImage() }
-    Shortcut { enabled: root.imageShortcutsEnabled; sequence: "1"; onActivated: root.controller.actualPixels() }
+    Shortcut { enabled: root.imageShortcutsEnabled && !root.panoramaActive; sequence: "1"; onActivated: root.controller.actualPixels() }
+    Shortcut { enabled: root.imageShortcutsEnabled && !!root.panoramaCanvas; sequence: "Up"; onActivated: root.panoramaCanvas.turn(0, 1) }
+    Shortcut { enabled: root.imageShortcutsEnabled && !!root.panoramaCanvas; sequence: "Down"; onActivated: root.panoramaCanvas.turn(0, -1) }
+    Shortcut { enabled: root.imageShortcutsEnabled && !!root.panoramaCanvas; sequences: ["+", "="]; onActivated: root.panoramaCanvas.zoom(1) }
+    Shortcut { enabled: root.imageShortcutsEnabled && !!root.panoramaCanvas; sequence: "-"; onActivated: root.panoramaCanvas.zoom(-1) }
+    Shortcut { enabled: root.imageShortcutsEnabled && root.controller.panoramaAvailable; sequence: "V";
+        onActivated: root.controller.setPanoramaEnabled(!root.panoramaActive) }
 
     Rectangle { anchors.fill: parent; color: Theme.canvasBackground }
 
     Loader {
         id: canvasLoader
         anchors.fill: parent
-        active: root.visible
+        active: root.visible && !root.panoramaActive
         source: Qt.resolvedUrl("../Mvp/ProductionFullScreenCanvas.qml")
         onLoaded: if (item) {
             item.controller = root.controller
             item.settingsController = root.settingsController
+        }
+    }
+
+    Loader {
+        id: panoramaLoader
+        anchors.fill: parent
+        active: root.visible && root.panoramaActive
+        source: Qt.resolvedUrl("../Mvp/ProductionPanoramaCanvas.qml")
+        onLoaded: Qt.callLater(function() {
+            if (panoramaLoader.item) panoramaLoader.item.controller = root.controller
+        })
+    }
+
+    Connections {
+        target: root.panoramaCanvas
+        ignoreUnknownSignals: true
+        function onImageFrameRendered() { root.imageFrameReady() }
+        function onContextMenuRequested(position) { fullScreenContextMenu.popup(position.x, position.y) }
+    }
+
+    Binding {
+        target: root.panoramaCanvas
+        property: "pixelInspectionEnabled"
+        value: root.pixelValueVisible && !navigationHover.hovered
+    }
+
+    Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 20
+        width: enterPanorama.implicitWidth + 8
+        height: enterPanorama.implicitHeight + 4
+        radius: 7
+        z: 26
+        visible: root.controller.panoramaAvailable && !root.panoramaActive
+        color: Theme.sensorWhite
+        border.color: Theme.opticalGray
+
+        AppIconButton {
+            id: enterPanorama
+            objectName: "openPanoramaPreview"
+            anchors.centerIn: parent
+            text: qsTr("View in 360°")
+            iconSource: root.iconPrefix + "panorama.svg"
+            shortcutText: "V"
+            onClicked: root.controller.setPanoramaEnabled(true)
         }
     }
 
@@ -173,7 +238,9 @@ Item {
             id: pixelLabel
             objectName: "fullScreenPixelInfoText"
             anchors.centerIn: parent
-            text: root.pixelText
+            text: root.panoramaActive
+                  ? ((root.panoramaCanvas && root.panoramaCanvas.pixelReadout) || qsTr("Move over the image"))
+                  : root.pixelText
             color: "#00FF00"
             font.family: Theme.monoFont
             font.pixelSize: 11
@@ -183,12 +250,18 @@ Item {
     Rectangle {
         id: navigationOverlay
         objectName: "fullScreenNavigationOverlay"
-        visible: root.thumbnailVisible && root.navigationData.visible === true
+        readonly property bool panorama: root.panoramaActive
+        readonly property var viewportRectangles: panorama
+            ? (root.panoramaCanvas ? root.panoramaCanvas.navigationRectangles : [])
+            : [root.navigationData.viewport || Qt.rect(0, 0, 0, 0)]
+        visible: root.thumbnailVisible && (panorama
+                 ? root.panoramaCanvas && root.panoramaCanvas.navigationReady
+                 : root.navigationData.visible === true)
         anchors.left: parent.left
         anchors.bottom: parent.bottom
         anchors.margins: 16
-        width: root.navigationData.width || 0
-        height: root.navigationData.height || 0
+        width: panorama ? 96 : (root.navigationData.width || 0)
+        height: panorama ? 51 : (root.navigationData.height || 0)
         radius: 3
         color: "#991E2227"
         border.width: 1
@@ -196,6 +269,7 @@ Item {
         z: 25
 
         NavigationThumbnail {
+            id: navigationImage
             anchors.fill: parent
             anchors.margins: 3
             path: root.controller.currentPath || ""
@@ -205,15 +279,36 @@ Item {
             mipmap: root.smoothDisplay
             opacity: 0.72
         }
-        Rectangle {
-            property rect normalizedViewport: root.navigationData.viewport || Qt.rect(0, 0, 0, 0)
-            x: 3 + normalizedViewport.x * (parent.width - 6)
-            y: 3 + normalizedViewport.y * (parent.height - 6)
-            width: normalizedViewport.width * (parent.width - 6)
-            height: normalizedViewport.height * (parent.height - 6)
-            color: "#18FFFFFF"
-            border.width: 1
-            border.color: "white"
+        Repeater {
+            model: 2
+            Rectangle {
+                required property int index
+                readonly property rect viewport: navigationOverlay.viewportRectangles[index] || Qt.rect(0, 0, 0, 0)
+                visible: width > 0 && height > 0
+                x: navigationImage.x + viewport.x * navigationImage.width
+                y: navigationImage.y + viewport.y * navigationImage.height
+                width: viewport.width * navigationImage.width
+                height: viewport.height * navigationImage.height
+                color: "#18FFFFFF"
+                border.width: 1
+                border.color: "white"
+            }
+        }
+        HoverHandler {
+            id: navigationHover
+            parent: navigationImage
+            enabled: navigationOverlay.visible && navigationOverlay.panorama
+            cursorShape: Qt.PointingHandCursor
+        }
+        TapHandler {
+            parent: navigationImage
+            enabled: navigationHover.enabled
+            onTapped: function(eventPoint) {
+                const position = eventPoint.position
+                root.panoramaCanvas.lookAtSource(position.x / navigationImage.width,
+                                                 position.y / navigationImage.height)
+                root.forceActiveFocus()
+            }
         }
     }
 
@@ -231,11 +326,11 @@ Item {
         objectName: "fullScreenLoadingMessage"
         parent: root.messageParent
         z: 10001
-        visible: root.visible && ((root.controller.loading && root.loadingMessageVisible)
-                                 || root.controller.errorText.length > 0)
+        visible: root.visible && ((root.imageLoading && root.loadingMessageVisible)
+                                 || root.imageError.length > 0)
         anchors.centerIn: parent
-        width: Math.min(420, messageText.implicitWidth + 36)
-        height: 42
+        width: Math.min(460, parent.width - 32)
+        height: Math.max(42, messageText.contentHeight + 20)
         radius: 6
         color: "#DCEEF1F1"
         border.width: 1
@@ -243,9 +338,12 @@ Item {
         Text {
             id: messageText
             anchors.centerIn: parent
-            text: root.controller.errorText.length > 0
-                  ? root.controller.errorText : qsTr("Loading %1…").arg(root.controller.fileName)
-            color: root.controller.errorText.length > 0 ? Theme.danger : Theme.graphiteInk
+            width: parent.width - 24
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            text: root.imageError.length > 0
+                  ? root.imageError : qsTr("Loading %1…").arg(root.controller.fileName)
+            color: root.imageError.length > 0 ? Theme.danger : Theme.graphiteInk
             font.family: Theme.uiFont
             font.pixelSize: 11
         }
@@ -286,7 +384,14 @@ Item {
                 onTriggered: root.pixelValueVisible = !root.pixelValueVisible
             }
         }
+        AppMenuItem {
+            visible: root.controller.panoramaAvailable
+            text: root.panoramaActive ? qsTr("Switch to flat view") : qsTr("View in 360°")
+            shortcutText: "V"
+            onTriggered: root.controller.setPanoramaEnabled(!root.panoramaActive)
+        }
         AppMenu {
+            visible: !root.panoramaActive
             title: qsTr("Scale")
             objectName: "fullScreenScaleMenu"
             AppMenuItem {

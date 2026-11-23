@@ -17,6 +17,7 @@ Item {
     property string technicalLabel
     property string fileType
     property var dimensions
+    property bool panoramaCandidate: false
     property int bitDepth: 0
     property string fileSizeText
     property bool requestThumbnail: true
@@ -213,6 +214,12 @@ Item {
                     smooth: true
                     mipmap: true
                 }
+                PanoramaBadge {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.margins: 4
+                    visible: root.panoramaCandidate
+                }
             }
             Text {
                 id: gridName
@@ -297,6 +304,12 @@ Item {
                     smooth: true
                     mipmap: true
                 }
+                PanoramaBadge {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.margins: 4
+                    visible: root.panoramaCandidate
+                }
             }
             Text {
                 id: listName
@@ -342,7 +355,8 @@ Item {
 
     Rectangle {
         visible: root.selected
-        x: root.displayMode === 1 ? 12 : 14
+        x: root.panoramaCandidate ? (root.displayMode === 1 ? 58 : root.width - 32)
+                                  : (root.displayMode === 1 ? 12 : 14)
         y: root.displayMode === 1 ? 10 : 14
         width: 18
         height: 18

@@ -17,6 +17,8 @@ qt_add_executable(LumenQml
     thumbnail_image_provider.cpp
     qml_image_canvas.h
     qml_image_canvas.cpp
+    panorama_canvas.h
+    panorama_canvas.cpp
     compare_controller.h
     compare_controller.cpp
     image_properties_controller.h
@@ -71,6 +73,7 @@ qt_add_qml_module(LumenQml
         Mvp/RawParametersDialog.qml
         Mvp/ProductionCompareCanvas.qml
         Mvp/ProductionFullScreenCanvas.qml
+        Mvp/ProductionPanoramaCanvas.qml
         Mvp/TopToolbar.ui.qml
         Mvp/WindowCaptionButtons.qml
         Mvp/ApplicationNotices.qml
@@ -78,6 +81,7 @@ qt_add_qml_module(LumenQml
         Mvp/NavigationThumbnail.qml
         Mvp/PathToolTip.qml
         Mvp/ThumbnailTile.qml
+        Mvp/PanoramaBadge.qml
         Pages/BrowsePage.qml
         Pages/ComparePage.qml
         Pages/FullScreenPage.qml
@@ -100,6 +104,10 @@ set(_mvpview_qml_icons
     ${PROJECT_SOURCE_DIR}/assets/icons/ui/back.svg
     ${PROJECT_SOURCE_DIR}/assets/icons/ui/forward.svg
     ${PROJECT_SOURCE_DIR}/assets/icons/ui/up.svg
+    ${PROJECT_SOURCE_DIR}/assets/icons/ui/down.svg
+    ${PROJECT_SOURCE_DIR}/assets/icons/ui/zoom-in.svg
+    ${PROJECT_SOURCE_DIR}/assets/icons/ui/zoom-out.svg
+    ${PROJECT_SOURCE_DIR}/assets/icons/ui/panorama.svg
     ${PROJECT_SOURCE_DIR}/assets/icons/ui/chevron-down.svg
     ${PROJECT_SOURCE_DIR}/assets/icons/ui/folder.svg
     ${PROJECT_SOURCE_DIR}/assets/icons/ui/folder-open.svg

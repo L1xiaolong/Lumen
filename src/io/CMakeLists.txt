@@ -59,6 +59,8 @@ qt_add_library(mvpview_io STATIC
     qt_image_decoder.h
     qt_image_decoder.cpp
     jpeg_stripe_cache.h
+    panorama_source.h
+    panorama_source.cpp
     metadata_reader.h
     encoded_color_management.h
     directory_scanner.h
@@ -76,7 +78,7 @@ qt_add_library(mvpview_io STATIC
 )
 
 target_include_directories(mvpview_io PUBLIC ${PROJECT_SOURCE_DIR}/src)
-find_package(libjpeg-turbo 3.1.2 CONFIG QUIET)
+target_link_libraries(mvpview_io PRIVATE libjpeg-turbo::jpeg Exiv2::exiv2lib mvpview_miniz)
 if(TARGET libjpeg-turbo::turbojpeg)
     target_sources(mvpview_io PRIVATE jpeg_stripe_cache.cpp)
     target_link_libraries(mvpview_io PRIVATE libjpeg-turbo::turbojpeg)

@@ -28,6 +28,7 @@
 
 ## Features
 
+- **360° panorama preview** detects equirectangular JPEGs with GPano metadata and streams tiles for single-scan images up to 32K wide. Possible panoramas have a `360` thumbnail badge and can be toggled with `V` in full screen. Set horizontal and vertical FOV independently, turn with the arrow keys, zoom with the wheel, click the overview to reposition, and hover to read source coordinates and RGB values.
 - **YUV / DNG / headerless RAW support**: Open images without converting them first. Supports camera RAW, Bayer RAW10/12/16, and NV12 / NV21 / I420 / P010.
 - **Cross-folder comparison**: Open 2–4 folders at once and start synchronized comparison with one click, without switching back and forth or copying files.
 - **Fast decoding, smooth viewing**: Asynchronous decoding, staged previews, and thumbnail caching keep browsing, switching images, and viewing large images responsive.
@@ -95,6 +96,7 @@ These dependencies are needed only when **building from source**. The repository
 | Build tools | CMake 3.25+ and a C++20 compiler; Xcode Command Line Tools on macOS, MSYS2/UCRT64 recommended on Windows |
 | Qt | 6.9+; Core, Gui, Network, Quick, QuickControls2, QuickLayouts, QuickTemplates2, Svg, ShaderTools, LinguistTools, and **Gui private development headers matching the Qt version** |
 | LibRaw / Exiv2 | LibRaw 0.21+ and Exiv2 0.28+ for camera RAW decoding and metadata reading |
+| libjpeg-turbo | 3.1.2+ for scaled JPEG decoding and panorama tiles |
 | LittleCMS | Optional, 2.x; enables ICC color management and is automatically disabled if unavailable |
 | Packaging tools | Python 3.9+; `macdeployqt` and system signing/DMG tools on macOS, `windeployqt` and NSIS on Windows |
 
@@ -112,7 +114,7 @@ cd Lumen
 After installing Homebrew and Xcode Command Line Tools:
 
 ```sh
-brew install cmake qt libraw exiv2 little-cms2 pkgconf
+brew install cmake qt libraw exiv2 jpeg-turbo little-cms2 pkgconf
 ./build_macos.sh release
 
 # Create a DMG and ZIP with runtime dependencies in dist/
@@ -145,6 +147,7 @@ pacman -S --needed \
   mingw-w64-ucrt-x86_64-qt6-svg mingw-w64-ucrt-x86_64-qt6-shadertools \
   mingw-w64-ucrt-x86_64-qt6-tools \
   mingw-w64-ucrt-x86_64-libraw mingw-w64-ucrt-x86_64-exiv2 \
+  mingw-w64-ucrt-x86_64-libjpeg-turbo \
   mingw-w64-ucrt-x86_64-lcms2 mingw-w64-ucrt-x86_64-python \
   mingw-w64-ucrt-x86_64-nsis
 ```

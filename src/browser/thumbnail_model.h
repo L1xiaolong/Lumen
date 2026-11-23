@@ -29,7 +29,8 @@ class ThumbnailModel final : public QAbstractListModel {
         FileNameRole,
         TechnicalLabelRole,
         SelectedRole,
-        SelectionOrdinalRole
+        SelectionOrdinalRole,
+        PanoramaCandidateRole
     };
 
     explicit ThumbnailModel(ImageLoader* loader, QObject* parent = nullptr);

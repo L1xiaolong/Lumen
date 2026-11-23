@@ -1,6 +1,7 @@
 #include "browser/thumbnail_model.h"
 
 #include "io/image_loader.h"
+#include "io/panorama_source.h"
 
 #include <QFileInfo>
 #include <QIcon>
@@ -71,7 +72,7 @@ ThumbnailModel::ThumbnailModel(ImageLoader* loader, QObject* parent)
                 bitDepths_.insert(path, validBits);
                 const QModelIndex changed = index(row);
                 emit dataChanged(changed, changed,
-                                 {DimensionsRole, BitDepthRole, TechnicalLabelRole});
+                                 {DimensionsRole, BitDepthRole, TechnicalLabelRole, PanoramaCandidateRole});
             });
 }
 
@@ -116,6 +117,9 @@ QVariant ThumbnailModel::data(const QModelIndex& index, int role) const {
                          : file.fileType;
     case DimensionsRole:
         return dimensions_.value(file.path);
+    case PanoramaCandidateRole:
+        return !file.isDirectory && hasPanoramaDimensions(dimensions_.value(file.path)) &&
+               isPanoramaJpeg(file.path);
     case BitDepthRole:
         return bitDepths_.value(file.path);
     case FileSizeTextRole:
@@ -178,6 +182,7 @@ QHash<int, QByteArray> ThumbnailModel::roleNames() const {
     roles.insert(TechnicalLabelRole, "technicalLabel");
     roles.insert(SelectedRole, "isSelected");
     roles.insert(SelectionOrdinalRole, "selectionOrdinal");
+    roles.insert(PanoramaCandidateRole, "panoramaCandidate");
     return roles;
 }
 

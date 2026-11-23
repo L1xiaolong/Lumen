@@ -100,7 +100,7 @@ jobs:
 
       - name: Install image libraries (macOS)
         if: runner.os == 'macOS'
-        run: brew install libraw exiv2 pkgconf
+        run: brew install libraw exiv2 jpeg-turbo pkgconf
 
       - name: Set up MSYS2/UCRT64
         if: runner.os == 'Windows'
@@ -120,6 +120,7 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-libraw
             mingw-w64-ucrt-x86_64-exiv2
+            mingw-w64-ucrt-x86_64-libjpeg-turbo
             mingw-w64-ucrt-x86_64-python
             zip
             unzip

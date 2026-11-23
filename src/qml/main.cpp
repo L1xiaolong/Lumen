@@ -91,6 +91,7 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     QString screenshotPath;
     QString selectedPath;
     QStringList initialComparePaths;
+    QStringList initialFullScreenPaths;
     QString displayMode;
     int initialFileManagerCount = 1;
     bool nativeScreenshot = false;
@@ -131,6 +132,8 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
         } else if (arguments.at(i) == QStringLiteral("--file-managers") &&
                    i + 1 < arguments.size()) {
             initialFileManagerCount = qBound(1, arguments.at(++i).toInt(), 4);
+        } else if (arguments.at(i) == QStringLiteral("--qml-fullscreen") && i + 1 < arguments.size()) {
+            initialFullScreenPaths.append(QFileInfo(arguments.at(++i)).absoluteFilePath());
         } else if (arguments.at(i) == QStringLiteral("--qml-compare")) {
             while (i + 1 < arguments.size() && !arguments.at(i + 1).startsWith(QLatin1Char('-'))) {
                 initialComparePaths.append(QFileInfo(arguments.at(++i)).absoluteFilePath());
@@ -145,7 +148,8 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     // The browse page can use the software scene graph for deterministic CI
     // captures. ComparePage contains a QQuickRhiItem and therefore must keep a
     // hardware RHI backend even when --screenshot-native was not specified.
-    if (!screenshotPath.isEmpty() && !nativeScreenshot && initialComparePaths.isEmpty()) {
+    if (!screenshotPath.isEmpty() && !nativeScreenshot && initialComparePaths.isEmpty() &&
+        initialFullScreenPaths.isEmpty()) {
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
     }
 
@@ -202,6 +206,7 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     engine.rootContext()->setContextProperty(QStringLiteral("rawParametersController"),
                                              &rawParametersController);
     engine.rootContext()->setContextProperty(QStringLiteral("initialComparePaths"), initialComparePaths);
+    engine.rootContext()->setContextProperty(QStringLiteral("initialFullScreenPaths"), initialFullScreenPaths);
     engine.rootContext()->setContextProperty(QStringLiteral("showSettingsOnStartup"), showSettings);
     engine.rootContext()->setContextProperty(QStringLiteral("settingsStartupSection"),
                                              settingsStartupSection);

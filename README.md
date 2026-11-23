@@ -30,6 +30,7 @@
 ## 特色
 
 - **YUV / DNG/ 无头RAW 支持**：无需先转换成普通图片，支持相机 RAW、Bayer RAW10/12/16，以及 NV12 / NV21 / I420 / P010。
+- **360° 全景预览**：自动识别 GPano 标记的等距柱状 JPEG，分块浏览最高 32K 宽的单扫描图像。疑似全景图的缩略图带有 `360` 标记，可在全屏中按 `V` 切换。支持独立设置水平和垂直视场角、方向键转动、滚轮缩放、点击左下角缩略图定位，以及悬停查看原图坐标和 RGB。
 - **跨文件夹比较**：支持同时打开2～4个目录，一键同步对比，无需来回切换或复制文件。
 - **快速解析，流畅观看**：异步解码、分级预览与缩略图缓存，浏览、切图、查看大图更顺畅。
 - **轻量化，专注看图**：围绕浏览、选片和比较展开，常用操作触手可及；支持联动缩放、平移、滑动分割与A/B比较。
@@ -98,6 +99,7 @@ open -a Lumen --args /path/to/images
 | 编译工具 | CMake 3.25+、C++20 编译器；macOS 使用 Xcode Command Line Tools，Windows 推荐 MSYS2/UCRT64 |
 | Qt | 6.9+；Core、Gui、Network、Quick、QuickControls2、QuickLayouts、QuickTemplates2、Svg、ShaderTools、LinguistTools，及**同版本 Gui 私有开发头文件** |
 | LibRaw / Exiv2 | LibRaw 0.21+、Exiv2 0.28+；用于相机 RAW 解码与元数据读取 |
+| libjpeg-turbo | 3.1.2+，用于全景缩采样和瓦片解码 |
 | LittleCMS | 可选，2.x；提供 ICC 色彩管理，未找到时自动禁用 |
 | 打包工具 | Python 3.9+；macOS 需要 `macdeployqt` 及系统签名、DMG 工具，Windows 需要 `windeployqt` 和 NSIS |
 
@@ -115,7 +117,7 @@ cd Lumen
 安装 Homebrew 与 Xcode Command Line Tools 后：
 
 ```sh
-brew install cmake qt libraw exiv2 little-cms2 pkgconf
+brew install cmake qt libraw exiv2 jpeg-turbo little-cms2 pkgconf
 ./build_macos.sh release
 
 # 生成包含运行依赖的 DMG 与 ZIP，输出到 dist/
@@ -151,6 +153,7 @@ pacman -S --needed \
   mingw-w64-ucrt-x86_64-qt6-svg mingw-w64-ucrt-x86_64-qt6-shadertools \
   mingw-w64-ucrt-x86_64-qt6-tools \
   mingw-w64-ucrt-x86_64-libraw mingw-w64-ucrt-x86_64-exiv2 \
+  mingw-w64-ucrt-x86_64-libjpeg-turbo \
   mingw-w64-ucrt-x86_64-lcms2 mingw-w64-ucrt-x86_64-python \
   mingw-w64-ucrt-x86_64-nsis
 ```

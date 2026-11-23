@@ -1119,6 +1119,14 @@ Choose another folder or drop images here</source>
 <context>
     <name>FullScreenPage</name>
     <message>
+        <source>View in 360°</source>
+        <translation>以 360° 查看</translation>
+    </message>
+    <message>
+        <source>Switch to flat view</source>
+        <translation>切换至平面视图</translation>
+    </message>
+    <message>
         <location filename="../Pages/FullScreenPage.qml" line="20"/>
         <location filename="../Pages/FullScreenPage.qml" line="71"/>
         <source>Move over the image</source>
@@ -4270,6 +4278,95 @@ Returned to the previous folder.</source>
     <message>
         <source>Download failed. Check your connection and try again. Details: %1</source>
         <translation>下载失败，请检查网络连接后重试。详细信息：%1</translation>
+    </message>
+</context>
+<context>
+    <name>ProductionPanoramaCanvas</name>
+    <message>
+        <source>Look left</source>
+        <translation>向左看</translation>
+    </message>
+    <message>
+        <source>Look right</source>
+        <translation>向右看</translation>
+    </message>
+    <message>
+        <source>Look up</source>
+        <translation>向上看</translation>
+    </message>
+    <message>
+        <source>Look down</source>
+        <translation>向下看</translation>
+    </message>
+    <message>
+        <source>Zoom out</source>
+        <translation>缩小</translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation>放大</translation>
+    </message>
+    <message>
+        <source>Horizontal field of view (degrees)</source>
+        <translation>水平视场角（度）</translation>
+    </message>
+    <message>
+        <source>Vertical field of view (degrees)</source>
+        <translation>垂直视场角（度）</translation>
+    </message>
+    <message>
+        <source>H</source>
+        <translation>横</translation>
+    </message>
+    <message>
+        <source>V</source>
+        <translation>纵</translation>
+    </message>
+    <message>
+        <source>Reset view</source>
+        <translation>重置视角</translation>
+    </message>
+    <message>
+        <source>Switch to flat view</source>
+        <translation>切换至平面视图</translation>
+    </message>
+</context>
+<context>
+    <name>mvpview::PanoramaCanvas</name>
+    <message>
+        <source>This JPEG needs more memory to open in 360°. Convert it to a single-scan JPEG.</source>
+        <translation>打开此 JPEG 的 360° 视图需要更多内存。请将其转换为单扫描 JPEG。</translation>
+    </message>
+    <message>
+        <source>Could not load the panorama.</source>
+        <translation>无法加载全景图。</translation>
+    </message>
+    <message>
+        <source>Preparing full detail…</source>
+        <translation>正在生成高清瓦片…</translation>
+    </message>
+    <message>
+        <source>Preview only · Full detail unavailable</source>
+        <translation>当前为预览，高清瓦片不可用</translation>
+    </message>
+    <message>
+        <source>The graphics device could not display this panorama.</source>
+        <translation>图形设备无法显示这张全景图。</translation>
+    </message>
+    <message>
+        <source>Reading pixel…</source>
+        <translation>正在读取像素…</translation>
+    </message>
+    <message>
+        <source>Pixel unavailable</source>
+        <translation>像素值不可用</translation>
+    </message>
+</context>
+<context>
+    <name>PanoramaBadge</name>
+    <message>
+        <source>Possible 360° panorama</source>
+        <translation>疑似 360° 全景图</translation>
     </message>
 </context>
 </TS>

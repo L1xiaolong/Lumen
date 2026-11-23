@@ -1149,6 +1149,7 @@ Rectangle {
                     required property url thumbnailUrl
                     required property bool isDirectory
                     required property bool isSelected
+                    required property bool panoramaCandidate
 
                     property url previewUrl: thumbnailUrl
                     property string previewName: fileName
@@ -1245,6 +1246,12 @@ Rectangle {
                             fillMode: Image.PreserveAspectFit
                             smooth: true
                             mipmap: true
+                        }
+                        PanoramaBadge {
+                            anchors.left: galleryPreview.left
+                            anchors.top: galleryPreview.top
+                            anchors.margins: 4
+                            visible: galleryDelegate.panoramaCandidate
                         }
                         Text {
                             anchors.left: parent.left

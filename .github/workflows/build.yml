@@ -31,7 +31,7 @@ jobs:
           cache: true
       - name: Install image libraries (macOS)
         if: runner.os == 'macOS'
-        run: brew install libraw exiv2 pkgconf
+        run: brew install libraw exiv2 jpeg-turbo pkgconf
       - name: Set up MSYS2/UCRT64
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
@@ -50,6 +50,7 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-libraw
             mingw-w64-ucrt-x86_64-exiv2
+            mingw-w64-ucrt-x86_64-libjpeg-turbo
             mingw-w64-ucrt-x86_64-lcms2
       - name: Configure (macOS)
         if: runner.os == 'macOS'
@@ -60,6 +61,9 @@ jobs:
       - name: Build (macOS)
         if: runner.os == 'macOS'
         run: cmake --build --preset macos-debug
+      - name: Panorama cache tests (macOS)
+        if: runner.os == 'macOS'
+        run: ctest --test-dir build/macos-preset-debug --output-on-failure
       - name: QML static analysis (macOS)
         if: runner.os == 'macOS'
         run: cmake --build --preset macos-debug --target LumenQml_qmllint
@@ -71,10 +75,15 @@ jobs:
         run: >-
           cmake --preset windows-msys2-debug
           -DMVPVIEW_GITHUB_REPOSITORY="${GITHUB_REPOSITORY}"
+          -DMVPVIEW_ENABLE_GRAPHICS_TESTS=ON
       - name: Build (Windows MSYS2/UCRT64)
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: cmake --build --preset windows-msys2-debug
+      - name: Panorama cache and render tests (Windows MSYS2/UCRT64)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: ctest --test-dir build/windows-msys2-debug --output-on-failure
       - name: QML static analysis (Windows MSYS2/UCRT64)
         if: runner.os == 'Windows'
         shell: msys2 {0}

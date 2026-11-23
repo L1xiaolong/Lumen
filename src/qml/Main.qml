@@ -250,9 +250,10 @@ ApplicationWindow {
 
     Component.onCompleted: {
         appSettings.startAutomaticUpdateCheck()
-        if (initialComparePaths.length >= 2) {
+        if (initialFullScreenPaths.length > 0)
+            Qt.callLater(function() { window.openFullScreen(initialFullScreenPaths, 0) })
+        else if (initialComparePaths.length >= 2)
             window.openCompare(initialComparePaths)
-        }
         if (showSettingsOnStartup) {
             window.openSettings(settingsStartupSection)
         }

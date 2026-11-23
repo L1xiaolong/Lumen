@@ -82,6 +82,9 @@ class ImageLoader final : public QObject {
     [[nodiscard]] qsizetype cachedBytes() const;
     [[nodiscard]] qsizetype residentPixelBytes() const;
     [[nodiscard]] qsizetype nominalGpuPixelBytes() const;
+    [[nodiscard]] std::shared_ptr<PixelMemoryLedger> residentPixelLedger() const {
+        return residentAccounting_;
+    }
     [[nodiscard]] qsizetype residentResourceBytes() const;
     // Keep externally held UI pixels registered for the returned token's lifetime.
     [[nodiscard]] PixelMemoryOwnership accountImagePixels(const QImage& image) const;

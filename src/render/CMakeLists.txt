@@ -33,4 +33,13 @@ qt_add_shaders(mvpview_render_backend "mvpview_bayer_shaders"
         shaders/qml_side.frag
 )
 
+qt_add_shaders(mvpview_render_backend "mvpview_panorama_shaders"
+    PREFIX "/shaders"
+    BASE "shaders"
+    GLSL "120,140,330,300 es"
+    FILES
+        shaders/panorama.vert
+        shaders/panorama.frag
+)
+
 mvpview_enable_warnings(mvpview_render_backend)

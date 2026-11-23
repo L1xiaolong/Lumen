@@ -2,6 +2,7 @@
 /out/
 /dist/
 /test_images*/
+/tests/
 /.vscode/
 /vcpkg_installed/
 /CMakeUserPresets.json

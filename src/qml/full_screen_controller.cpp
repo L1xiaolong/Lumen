@@ -6,6 +6,7 @@
 #include "io/single_file_rename.h"
 #include "platform/platform_services.h"
 #include "qml/qml_image_canvas.h"
+#include "qml/panorama_canvas.h"
 #include "browser/file_clipboard.h"
 
 #include <QCoreApplication>
@@ -16,6 +17,7 @@
 #include <QPointer>
 #include <QQuickWindow>
 #include <QTimer>
+#include <QThreadPool>
 
 #include <algorithm>
 
@@ -53,11 +55,10 @@ QString FullScreenController::fileType() const {
 }
 
 QString FullScreenController::fileSizeText() const {
-    if (!frame_)
-        return {};
+    if (!frame_ && !panoramaEnabled_) return {};
 
-    QString text =
-        QLocale().formattedDataSize(frame_->metadata.fileSize, 1, QLocale::DataSizeTraditionalFormat);
+    const auto bytes = frame_ ? frame_->metadata.fileSize : QFileInfo(currentPath()).size();
+    QString text = QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat);
     // QLocale separates the number and unit with locale-dependent whitespace (often a normal,
     // non-breaking, or narrow non-breaking space). The fullscreen HUD intentionally keeps the
     // compact "100MB" form regardless of the active locale.
@@ -69,6 +70,7 @@ QString FullScreenController::fileSizeText() const {
 }
 
 QSize FullScreenController::imageSize() const {
+    if (panoramaEnabled_) return panoramaInfo_.size;
     return frame_ ? ComparisonPixelProbe::logicalFrameSize(*frame_) : QSize{};
 }
 
@@ -99,11 +101,12 @@ void FullScreenController::closeSession() {
         diagnostics::event(diagnostics::Level::Info, diagnostics::browse(),
                            QStringLiteral("fullscreen.session_close"),
                            {{QStringLiteral("slots"), static_cast<int>(paths_.size())}}, true);
-    fullLoadTimer_.stop();
-    previewHandle_.cancel();
-    detailHandle_.cancel();
-    fullHandle_.cancel();
+    cancelImageRequests();
     ++generation_;
+    panoramaEnabled_ = false;
+    panoramaInfo_ = {};
+    panoramaKey_.clear();
+    if (panorama_) panorama_->open({}, {});
     paths_.clear();
     currentIndex_ = -1;
     loading_ = false;
@@ -145,6 +148,53 @@ void FullScreenController::attachCanvas(QObject* object) {
     refreshCanvas(true);
 }
 
+void FullScreenController::attachPanorama(QObject* object) {
+    auto* panorama = qobject_cast<PanoramaCanvas*>(object);
+    if (!panorama || panorama == panorama_) return;
+    if (panorama_) disconnect(panorama_, nullptr, this, nullptr);
+    panorama_ = panorama;
+    panorama_->setPixelLedger(loader_->residentPixelLedger());
+    connect(panorama_, &PanoramaCanvas::statusChanged, this, [this] {
+        if (!panoramaEnabled_ || !panorama_ || !panoramaInfo_.canPreview) return;
+        loading_ = panorama_->loading();
+        errorText_ = panorama_->errorText();
+        emit stateChanged();
+    });
+    if (panoramaEnabled_ && panoramaInfo_.canPreview) panorama_->open(currentPath(), panoramaInfo_);
+}
+
+void FullScreenController::cancelImageRequests() {
+    fullLoadTimer_.stop();
+    previewHandle_.cancel();
+    detailHandle_.cancel();
+    fullHandle_.cancel();
+}
+
+void FullScreenController::setPanoramaEnabled(bool enabled) {
+    if (!panoramaInfo_.canPreview || panoramaEnabled_ == enabled) return;
+    cancelImageRequests();
+    ++generation_;
+    if (!panoramaKey_.isEmpty()) panoramaOverrides_.insert(panoramaKey_, new bool(enabled));
+    applyPanoramaProbe(currentPath(), panoramaInfo_);
+}
+
+void FullScreenController::applyPanoramaProbe(const QString& path, const PanoramaInfo& info) {
+    panoramaInfo_ = info;
+    const auto* preference = panoramaOverrides_.object(panoramaKey_);
+    panoramaEnabled_ = info.canPreview && (preference ? *preference : info.autoPreview);
+    loading_ = true;
+    errorText_.clear();
+    fullRequested_ = false;
+    exactResolutionRequested_ = false;
+    frame_.reset();
+    detailFrame_.reset();
+    requestedDetailRegion_ = {};
+    refreshCanvas(true);
+    if (panorama_) panorama_->open(panoramaEnabled_ ? path : QString{}, panoramaInfo_);
+    emit stateChanged();
+    if (!panoramaEnabled_) startFlatPreview(path, generation_);
+}
+
 void FullScreenController::showPrevious() {
     if (canGoPrevious()) showIndex(currentIndex_ - 1);
 }
@@ -154,11 +204,16 @@ void FullScreenController::showNext() {
 }
 
 void FullScreenController::fitImage() {
+    if (panoramaEnabled_) {
+        if (panorama_) panorama_->resetView();
+        return;
+    }
     exactResolutionRequested_ = false;
     if (canvas_) canvas_->fitAll();
 }
 
 void FullScreenController::actualPixels() {
+    if (panoramaEnabled_) return;
     exactResolutionRequested_ = true;
     fullLoadTimer_.stop();
     if (canvas_) {
@@ -224,10 +279,9 @@ void FullScreenController::showIndex(int index) {
     diagnostics::event(diagnostics::Level::Debug, diagnostics::browse(),
                        QStringLiteral("fullscreen.index_change"),
                        {{QStringLiteral("index"), index}}, false);
-    fullLoadTimer_.stop();
-    previewHandle_.cancel();
-    detailHandle_.cancel();
-    fullHandle_.cancel();
+    cancelImageRequests();
+    panoramaInfo_ = {};
+    panoramaKey_.clear();
     currentIndex_ = index;
     frame_.reset();
     detailFrame_.reset();
@@ -238,9 +292,36 @@ void FullScreenController::showIndex(int index) {
     errorText_.clear();
     const quint64 generation = ++generation_;
     const QString path = currentPath();
+    if (!isPanoramaJpeg(path)) {
+        applyPanoramaProbe(path, {});
+        return;
+    }
+
+    panoramaKey_ = panoramaCacheDirectory(path);
+    if (const auto* info = panoramaProbes_.object(panoramaKey_)) {
+        applyPanoramaProbe(path, *info);
+        return;
+    }
+
+    // Preserve the existing canvas while probing. Adjacent panoramas can then
+    // reuse the atlas and shared buffers, while the new image starts blank.
+    if (panorama_) panorama_->open({}, {});
     refreshCanvas(true);
     emit stateChanged();
+    const QPointer<FullScreenController> self(this);
+    auto* application = QCoreApplication::instance();
+    QThreadPool::globalInstance()->start([self, application, path, generation] {
+        const auto info = probePanorama(path);
+        QMetaObject::invokeMethod(application, [self, path, generation, info] {
+            if (!self || self->generation_ != generation) return;
+            if (!self->panoramaKey_.isEmpty())
+                self->panoramaProbes_.insert(self->panoramaKey_, new PanoramaInfo(info));
+            self->applyPanoramaProbe(path, info);
+        }, Qt::QueuedConnection);
+    }, 25);
+}
 
+void FullScreenController::startFlatPreview(const QString& path, quint64 generation) {
     const auto rawParameters = loader_->rawParameters(path);
     const qreal dpr = canvas_ && canvas_->window() ? canvas_->window()->devicePixelRatio() : 1.0;
     QSize previewSize = canvas_ ? QSize(qRound(canvas_->width() * dpr),
@@ -361,7 +442,7 @@ void FullScreenController::requestDetailRegion(const QRect& region) {
 }
 
 void FullScreenController::requestFullFrame(const QString& path, quint64 generation) {
-    if (fullRequested_ || path != currentPath() || generation != generation_) {
+    if (panoramaEnabled_ || fullRequested_ || path != currentPath() || generation != generation_) {
         return;
     }
     fullRequested_ = true;

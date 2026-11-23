@@ -810,9 +810,17 @@ void ImageLoader::scheduleJpegStripes(const QString& path, QSize size) {
     if ((suffix != QStringLiteral("jpg") && suffix != QStringLiteral("jpeg")) || !JpegStripeCache::eligible(size)) return;
     QTimer::singleShot(900, this, [this, path, size, schedule] {
         if (schedule != stripeSchedule_) return;
-        const bool started = writePool_.tryStart([path, size, budget = decodeWorkingBudget_] {
+        // TurboJPEG materializes full-image coefficients while transforming all
+        // stripes. Do not use the budget's oversized-request exception for
+        // unbounded background work while a large image is being viewed.
+        const qint64 encodedBytes = QFileInfo(path).size();
+        const auto transformBytes = estimatedPixelBytes(size, 12);
+        if (transformBytes >= memoryBudget_ || encodedBytes <= 0 ||
+            encodedBytes > memoryBudget_ - transformBytes) return;
+        const auto workingBytes = transformBytes + qsizetype(encodedBytes);
+        const bool started = writePool_.tryStart([path, size, workingBytes, budget = decodeWorkingBudget_] {
             if (JpegStripeCache::exists(path)) return;
-            const auto reservation = budget->reserve(estimatedPixelBytes(size, 12), [] { return false; }, [] { return -50; });
+            const auto reservation = budget->reserve(workingBytes, [] { return false; }, [] { return -50; });
             if (reservation) JpegStripeCache::build(path, size);
         });
         if (!started) scheduleJpegStripes(path, size);
