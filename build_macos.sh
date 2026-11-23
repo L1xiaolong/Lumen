@@ -21,7 +21,8 @@ Examples:
 Options:
   --clean      Remove the selected build directory before configuring.
   --no-crashpad  Disable macOS Crashpad when its pinned source is unavailable.
-  --qt-prefix  Build with a custom Qt installation instead of the Qt on PATH.
+  --qt-prefix  Build with a custom Qt installation. Defaults to Qt on PATH,
+               Homebrew, or an SDK installed under ~/Qt.
   --sign ID    Code-sign a package with ID. Default is an ad-hoc local signature.
   --no-zip     Do not also create the optional portable ZIP in package mode.
   -j N         Parallel build jobs. Defaults to the local CPU count.
@@ -141,6 +142,18 @@ if [[ -n "$qt_prefix" ]]; then
     build_dir="$script_dir/build/macos-custom-qt-${mode}"
 else
     build_dir="$script_dir/build/macos-preset-${mode}"
+    default_prefix_path="$brew_prefix"
+    if [[ -z "${Qt6_ROOT:-}${Qt6_DIR:-}${CMAKE_PREFIX_PATH:-}" ]] &&
+       ! command -v qtpaths >/dev/null 2>&1 &&
+       [[ ! -f "$brew_prefix/lib/cmake/Qt6/Qt6Config.cmake" ]]; then
+        # Qt's installer keeps each SDK in ~/Qt/<version>/macos and does not add it to PATH.
+        while IFS= read -r qt_sdk; do
+            [[ -f "$qt_sdk/lib/cmake/Qt6/Qt6Config.cmake" ]] || continue
+            default_prefix_path="$qt_sdk;$default_prefix_path"
+            export PATH="$qt_sdk/bin:$PATH"
+            break
+        done < <(printf '%s\n' "$HOME"/Qt/*/macos | sort -Vr)
+    fi
 fi
 built_app="$build_dir/src/qml/Lumen.app"
 
@@ -167,7 +180,7 @@ if [[ -n "$qt_prefix" ]]; then
 else
     echo "Configuring preset: $preset"
     cmake --preset "$preset" \
-        -DCMAKE_PREFIX_PATH="$brew_prefix" \
+        -DCMAKE_PREFIX_PATH="$default_prefix_path" \
         -DMVPVIEW_ENABLE_CRASHPAD="$enable_crashpad" \
         -DMVPVIEW_GITHUB_REPOSITORY="${MVPVIEW_GITHUB_REPOSITORY:-}"
     echo "Building preset: $preset (-j $jobs)"

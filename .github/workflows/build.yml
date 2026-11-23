@@ -62,7 +62,7 @@ jobs:
         if: runner.os == 'macOS'
         run: cmake --build --preset macos-debug
       - name: Panorama cache tests (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && hashFiles('tests/CMakeLists.txt') != ''
         run: ctest --test-dir build/macos-preset-debug --output-on-failure
       - name: QML static analysis (macOS)
         if: runner.os == 'macOS'
@@ -75,13 +75,13 @@ jobs:
         run: >-
           cmake --preset windows-msys2-debug
           -DMVPVIEW_GITHUB_REPOSITORY="${GITHUB_REPOSITORY}"
-          -DMVPVIEW_ENABLE_GRAPHICS_TESTS=ON
+          ${{ hashFiles('tests/CMakeLists.txt') != '' && '-DMVPVIEW_ENABLE_GRAPHICS_TESTS=ON' || '' }}
       - name: Build (Windows MSYS2/UCRT64)
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: cmake --build --preset windows-msys2-debug
       - name: Panorama cache and render tests (Windows MSYS2/UCRT64)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && hashFiles('tests/CMakeLists.txt') != ''
         shell: msys2 {0}
         run: ctest --test-dir build/windows-msys2-debug --output-on-failure
       - name: QML static analysis (Windows MSYS2/UCRT64)

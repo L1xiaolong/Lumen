@@ -106,6 +106,7 @@ add_subdirectory(third_party/miniz)
 add_subdirectory(src)
 
 include(CTest)
-if(BUILD_TESTING)
+# The local test suite is kept outside the public source distribution.
+if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
     add_subdirectory(tests)
 endif()
