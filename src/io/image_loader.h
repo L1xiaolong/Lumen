@@ -95,6 +95,7 @@ class ImageLoader final : public QObject {
     using AnalysisWork = std::function<QVariantMap(const std::function<bool()>&)>;
     LoadHandle requestAnalysis(AnalysisWork work, std::function<void(QVariantMap)> callback);
     LoadHandle requestMetadata(quint64 requestId, ImageFramePtr frame, Callback callback);
+    LoadHandle requestMetadata(quint64 requestId, const QString& path, Callback callback);
     void updateViewport(const QString& owner, const QHash<QString, int>& priorities, bool fast);
     [[nodiscard]] bool hasInteractiveWork() const;
     [[nodiscard]] bool fastScrolling() const;

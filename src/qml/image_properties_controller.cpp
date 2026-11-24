@@ -4,6 +4,7 @@
 #include "core/raw_plane_access.h"
 #include "core/raw_plane_histogram.h"
 #include "io/image_loader.h"
+#include "io/jxl_exr_decoder.h"
 
 #include <QDir>
 #include <QCoreApplication>
@@ -38,6 +39,28 @@ void appendGroup(QVariantList& groups, const QString& id, const char* title,
                  const QVariantList& fields) {
     if (!fields.isEmpty()) groups.append(QVariantMap{{QStringLiteral("id"), id},
         {QStringLiteral("title"), text(title)}, {QStringLiteral("fields"), fields}});
+}
+
+void appendNativeProperties(QVariantList& groups, const ImageMetadata& metadata) {
+    const auto append = [&](const QVector<ImageMetadata::PropertyGroup>& propertyGroups) {
+        for (const auto& group : propertyGroups) {
+            if (group.properties.isEmpty()) continue;
+            QVariantList fields;
+            for (const auto& property : group.properties) {
+                const QString label = property.type.isEmpty() ? text(property.name.toUtf8().constData()) : property.name;
+                fields.append(QVariantMap{{QStringLiteral("id"), QString::number(fields.size())},
+                    {QStringLiteral("label"), label}, {QStringLiteral("value"), property.value},
+                    {QStringLiteral("type"), property.type}, {QStringLiteral("mono"), true}});
+            }
+            QString title = text(group.title.toUtf8().constData());
+            if (!group.detail.isEmpty()) title += QStringLiteral(" · ") + group.detail;
+            groups.append(QVariantMap{{QStringLiteral("id"), group.id}, {QStringLiteral("title"), title},
+                {QStringLiteral("fields"), fields}, {QStringLiteral("collapsed"), group.collapsed},
+                {QStringLiteral("nativeMetadata"), true}});
+        }
+    };
+    append(metadata.formatProperties);
+    append(metadata.embeddedProperties);
 }
 
 QString byteSizeText(qint64 bytes) {
@@ -216,6 +239,30 @@ QVariantMap nativeFileHistogramMap(const QString& path, const std::function<bool
     // Analyze original encoded values rather than the display-converted QImage in the cache.
     // Read on the analysis worker and leave application-wide decoder/color settings untouched.
     if (cancelled()) return {};
+    if (QFileInfo(path).suffix().compare(QStringLiteral("exr"), Qt::CaseInsensitive) == 0) {
+        const auto histogram = JxlExrDecoder::analyzeExr(path, cancelled);
+        static constexpr std::array labels{
+            QT_TRANSLATE_NOOP("ImageProperties", "Luma"), QT_TRANSLATE_NOOP("ImageProperties", "Red"),
+            QT_TRANSLATE_NOOP("ImageProperties", "Green"), QT_TRANSLATE_NOOP("ImageProperties", "Blue")};
+        static constexpr std::array ids{"luma", "red", "green", "blue"};
+        static constexpr std::array colors{"#52616B", "#D65A5A", "#4E9D69", "#527BC9"};
+        QVariantList channels;
+        for (size_t index = 0; index < histogram.channels.size(); ++index) {
+            const auto& channel = histogram.channels[index];
+            if (channel.sampleCount == 0) continue;
+            channels.append(QVariantMap{
+                {QStringLiteral("id"), QString::fromLatin1(ids[index])},
+                {QStringLiteral("name"), text(labels[index])},
+                {QStringLiteral("color"), QString::fromLatin1(colors[index])},
+                {QStringLiteral("bins"), binsFor(channel.bins)},
+                {QStringLiteral("mean"), channel.mean}, {QStringLiteral("variance"), channel.variance},
+                {QStringLiteral("min"), channel.minimum}, {QStringLiteral("max"), channel.maximum},
+                {QStringLiteral("axisMinimum"), channel.axisMinimum}, {QStringLiteral("axisMaximum"), channel.axisMaximum},
+                {QStringLiteral("median"), channel.median}, {QStringLiteral("sampleCount"), channel.sampleCount}});
+        }
+        return {{QStringLiteral("valid"), !channels.isEmpty()}, {QStringLiteral("loading"), false},
+                {QStringLiteral("floatingPoint"), true}, {QStringLiteral("channels"), channels}};
+    }
     QImageReader reader(path);
     QImage image = reader.read();
     if (image.isNull() || cancelled())
@@ -304,6 +351,7 @@ void ImagePropertiesController::clear() {
     ++loadGeneration_;
     pendingHistogramSources_.clear();
     frame_.reset();
+    metadataOnly_.reset();
     path_.clear();
     fileName_.clear();
     directory_ = loading_ = metadataLoading_ = false;
@@ -352,7 +400,17 @@ void ImagePropertiesController::startLoading() {
             self->loading_ = false;
             if (!result.frame) {
                 self->errorText_ = result.error;
+                self->metadataLoading_ = true;
                 emit self->stateChanged();
+                self->metadataHandle_ = self->loader_->requestMetadata(generation, self->path_,
+                    [self, generation](quint64 id, const DecodeResult& metadata) {
+                        if (!self || id != generation || self->loadGeneration_ != generation) return;
+                        self->metadataLoading_ = false;
+                        self->metadataOnly_ = metadata.frame;
+                        self->metadataError_ = metadata.error;
+                        self->rebuildFields();
+                        emit self->stateChanged();
+                    });
                 return;
             }
             self->metadataLoading_ = true;
@@ -401,6 +459,11 @@ void ImagePropertiesController::rebuildFields() {
     if (!frame_) {
         if (auto parameters = loader_->rawParameters(path_))
             appendGroup(advancedGroups_, QStringLiteral("raw"), QT_TRANSLATE_NOOP("ImageProperties", "RAW / YUV parameters"), rawFieldRows(*parameters));
+        if (metadataOnly_) {
+            appendNativeProperties(advancedGroups_, metadataOnly_->metadata);
+            if (!metadataOnly_->metadata.metadataWarning.isEmpty()) warnings_.append(metadataOnly_->metadata.metadataWarning);
+        }
+        if (!metadataError_.isEmpty()) warnings_.append(metadataError_);
         return;
     }
     const auto& m = frame_->metadata;
@@ -410,11 +473,14 @@ void ImagePropertiesController::rebuildFields() {
     appendField(image, QStringLiteral("format"), QT_TRANSLATE_NOOP("ImageProperties", "Format"), m.format);
     appendField(image, QStringLiteral("dimensions"), QT_TRANSLATE_NOOP("ImageProperties", "Dimensions"), QStringLiteral("%1 × %2 px").arg(size.width()).arg(size.height()), true);
     appendField(image, QStringLiteral("bit-depth"), QT_TRANSLATE_NOOP("ImageProperties", "Bit depth"), text(QT_TRANSLATE_NOOP("ImageProperties", "%1-bit valid / %2-bit storage")).arg(d.validBits).arg(d.storageBits), true);
-    appendField(image, QStringLiteral("source-color-space"), QT_TRANSLATE_NOOP("ImageProperties", "Source color space"), d.sourceColor.colorSpace);
+    appendField(image, QStringLiteral("source-color-space"), m.format == QStringLiteral("EXR")
+        ? QT_TRANSLATE_NOOP("ImageProperties", "Viewer color interpretation")
+        : QT_TRANSLATE_NOOP("ImageProperties", "Source color space"), d.sourceColor.colorSpace);
     appendField(image, QStringLiteral("display-color-space"), QT_TRANSLATE_NOOP("ImageProperties", "Display color space"), d.displayColor.colorSpace);
     overviewGroups_.prepend(QVariantMap{{QStringLiteral("id"), QStringLiteral("image")},
         {QStringLiteral("title"), text(QT_TRANSLATE_NOOP("ImageProperties", "Image"))}, {QStringLiteral("fields"), image}});
 
+    appendNativeProperties(advancedGroups_, m);
     QVariantList color;
     appendField(color, QStringLiteral("source-primaries"), QT_TRANSLATE_NOOP("ImageProperties", "Source primaries"), d.sourceColor.primaries);
     appendField(color, QStringLiteral("source-transfer"), QT_TRANSLATE_NOOP("ImageProperties", "Source transfer"), d.sourceColor.transferFunction);

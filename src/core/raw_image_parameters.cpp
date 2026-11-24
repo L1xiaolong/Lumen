@@ -3,6 +3,7 @@
 
 #include <QtEndian>
 #include <QColorSpace>
+#include <QTransform>
 
 #include <algorithm>
 #include <array>
@@ -464,20 +465,13 @@ QPoint displayToSourcePixel(const QPoint& displayPixel, const QSize& sourceSize,
 }
 
 QImage orientedImage(QImage source, ImageOrientation orientation) {
-    if (orientation == ImageOrientation::Normal || source.isNull()) {
-        return source;
+    switch (orientation) {
+    case ImageOrientation::Rotate90Clockwise: return source.transformed(QTransform().rotate(90));
+    case ImageOrientation::Rotate180: return source.flipped(Qt::Horizontal | Qt::Vertical);
+    case ImageOrientation::Rotate270Clockwise: return source.transformed(QTransform().rotate(270));
+    case ImageOrientation::Normal: return source;
     }
-    QImage oriented(orientedImageSize(source.size(), orientation), source.format());
-    if (oriented.isNull()) {
-        return source;
-    }
-    for (int y = 0; y < oriented.height(); ++y) {
-        for (int x = 0; x < oriented.width(); ++x) {
-            const QPoint sourcePixel = displayToSourcePixel({x, y}, source.size(), orientation);
-            oriented.setPixel(x, y, source.pixel(sourcePixel));
-        }
-    }
-    return oriented;
+    return source;
 }
 
 } // namespace mvpview

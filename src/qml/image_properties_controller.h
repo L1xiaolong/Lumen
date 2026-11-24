@@ -78,6 +78,7 @@ class ImagePropertiesController final : public QObject {
     QString metadataError_;
     QTimer loadTimer_;
     ImageFramePtr frame_;
+    ImageFramePtr metadataOnly_;
     quint64 loadGeneration_ = 0;
     quint64 displayHistogramGeneration_ = 0;
     quint64 sourceHistogramGeneration_ = 0;

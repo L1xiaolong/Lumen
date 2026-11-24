@@ -955,16 +955,23 @@ Rectangle {
                     Image {
                         id: galleryImage
                         objectName: "galleryImage"
-                        x: galleryWorkspace.actualPixels
+                        readonly property bool fitPresentation: !galleryWorkspace.actualPixels &&
+                            root.controller.galleryHasPresentationSize
+                        readonly property real availableWidth: Math.max(1, galleryFlick.width - 36)
+                        readonly property real availableHeight: Math.max(1, galleryFlick.height - 36)
+                        readonly property real fitScale: fitPresentation
+                            ? Math.min(availableWidth / root.controller.galleryImageSize.width,
+                                       availableHeight / root.controller.galleryImageSize.height) : 1
+                        x: galleryWorkspace.actualPixels || fitPresentation
                            ? Math.max(18, (galleryFlick.width - width) / 2) : 18
-                        y: galleryWorkspace.actualPixels
+                        y: galleryWorkspace.actualPixels || fitPresentation
                            ? Math.max(18, (galleryFlick.height - height) / 2) : 18
                         width: galleryWorkspace.actualPixels && root.controller.galleryImageSize.width > 0
                                ? root.controller.galleryImageSize.width * galleryWorkspace.manualZoom
-                               : Math.max(1, galleryFlick.width - 36)
+                               : fitPresentation ? root.controller.galleryImageSize.width * fitScale : availableWidth
                         height: galleryWorkspace.actualPixels && root.controller.galleryImageSize.height > 0
                                 ? root.controller.galleryImageSize.height * galleryWorkspace.manualZoom
-                                : Math.max(1, galleryFlick.height - 36)
+                                : fitPresentation ? root.controller.galleryImageSize.height * fitScale : availableHeight
                         source: galleryWorkspace.visible && galleryWorkspace.currentPreviewUrl.toString().length > 0
                                 ? galleryWorkspace.currentPreviewUrl.toString() +
                                   (galleryWorkspace.useFullResolutionTexture
@@ -981,7 +988,8 @@ Rectangle {
                         retainWhileLoading: readyPath === galleryWorkspace.currentPreviewPath
                         smooth: root.smoothDisplay
                         mipmap: root.smoothDisplay
-                        fillMode: galleryWorkspace.actualPixels ? Image.Stretch : Image.PreserveAspectFit
+                        fillMode: galleryWorkspace.actualPixels || fitPresentation
+                                  ? Image.Stretch : Image.PreserveAspectFit
                         onStatusChanged: {
                             if (status === Image.Ready) readyPath = galleryWorkspace.currentPreviewPath
                             if (status === Image.Ready && galleryProbeArea.containsMouse)

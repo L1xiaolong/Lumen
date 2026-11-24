@@ -14,6 +14,7 @@ Rectangle {
     property int selectionCount: 1
     property int currentTab: 0
     property var scrollPositions: [0, 0, 0]
+    property var expandedGroups: ({})
     property string displayedPath: controller ? controller.path : ""
     readonly property bool hasItem: !!controller && controller.path.length > 0
     readonly property int effectiveTab: controller && controller.directory ? 0 : currentTab
@@ -23,6 +24,9 @@ Rectangle {
     }
     readonly property var groups: !hasItem ? [] : effectiveTab === 0
         ? controller.overviewGroups : effectiveTab === 2 ? controller.advancedGroups : []
+    readonly property bool hasDetailedMetadata: hasItem && controller.advancedGroups.some(function(group) {
+        return !!group.nativeMetadata
+    })
     signal closeRequested()
     signal headerDragStarted(point position)
     signal headerDragMoved(point position)
@@ -40,6 +44,7 @@ Rectangle {
     }
     onDisplayedPathChanged: {
         scrollPositions = [0, 0, 0]
+        expandedGroups = ({})
         scroll.contentY = 0
     }
 
@@ -135,9 +140,12 @@ Rectangle {
                     id: group
                     required property var modelData
                     objectName: "propertyGroup-" + modelData.id
+                    readonly property bool expandable: !!modelData.collapsed
+                    readonly property bool expanded: !expandable || !!root.expandedGroups[modelData.id]
                     width: body.width
                     spacing: 8
                     Text {
+                        visible: !group.expandable
                         width: parent.width
                         text: group.modelData.title
                         color: Theme.graphiteInk
@@ -146,23 +154,45 @@ Rectangle {
                         font.weight: Theme.emphasisFontWeight
                         wrapMode: Text.Wrap
                     }
-                    Rectangle {
+                    SettingsButton {
+                        visible: group.expandable
                         width: parent.width
-                        height: fields.implicitHeight
-                        radius: Theme.radius
-                        color: Theme.raisedSurface
-                        border.color: Theme.opticalGray
-                        PropertyFieldList {
-                            id: fields
-                            width: parent.width
-                            fields: group.modelData.fields
+                        text: group.expanded ? qsTr("Hide %1 (%2)").arg(group.modelData.title).arg(group.modelData.fields.length)
+                                             : qsTr("Show %1 (%2)").arg(group.modelData.title).arg(group.modelData.fields.length)
+                        onClicked: {
+                            const next = Object.assign({}, root.expandedGroups)
+                            next[group.modelData.id] = !group.expanded
+                            root.expandedGroups = next
+                        }
+                    }
+                    Loader {
+                        width: parent.width
+                        active: group.expanded
+                        visible: active
+                        sourceComponent: Rectangle {
+                            implicitHeight: fields.implicitHeight
+                            radius: Theme.radius
+                            color: Theme.raisedSurface
+                            border.color: Theme.opticalGray
+                            PropertyFieldList {
+                                id: fields
+                                width: parent.width
+                                fields: group.modelData.fields
+                            }
                         }
                     }
                 }
             }
+            SettingsButton {
+                visible: root.effectiveTab === 0 && root.hasDetailedMetadata
+                width: parent.width
+                text: qsTr("Detailed metadata")
+                onClicked: root.selectTab(2)
+            }
             Text {
                 visible: root.hasItem && root.effectiveTab === 0 && !root.controller.directory
                     && !root.controller.loading && !root.controller.metadataLoading
+                    && !root.hasDetailedMetadata
                     && root.controller.errorText.length === 0
                     && !root.groups.some(function(g) { return g.id === "capture" || g.id === "description" })
                 width: parent.width

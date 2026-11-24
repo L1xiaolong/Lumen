@@ -67,6 +67,7 @@ class BrowseController final : public QObject {
     Q_PROPERTY(int displayMode READ displayMode WRITE setDisplayMode NOTIFY displayModeChanged)
     Q_PROPERTY(int gridCellWidth READ gridCellWidth WRITE setGridCellWidth NOTIFY gridCellWidthChanged)
     Q_PROPERTY(QSize galleryImageSize READ galleryImageSize NOTIFY galleryImageChanged)
+    Q_PROPERTY(bool galleryHasPresentationSize READ galleryHasPresentationSize NOTIFY galleryImageChanged)
     Q_PROPERTY(bool galleryImageReady READ galleryImageReady NOTIFY galleryImageChanged)
     Q_PROPERTY(bool galleryFullResolution READ galleryFullResolution NOTIFY galleryImageChanged)
     Q_PROPERTY(QString galleryInfoText READ galleryInfoText NOTIFY galleryImageChanged)
@@ -111,6 +112,9 @@ class BrowseController final : public QObject {
     [[nodiscard]] int displayMode() const { return displayMode_; }
     [[nodiscard]] int gridCellWidth() const { return gridCellWidth_; }
     [[nodiscard]] QSize galleryImageSize() const { return galleryImageSize_; }
+    [[nodiscard]] bool galleryHasPresentationSize() const {
+        return galleryFrame_ && galleryFrame_->descriptor.presentationSize.isValid();
+    }
     [[nodiscard]] bool galleryImageReady() const { return galleryFrame_ != nullptr; }
     [[nodiscard]] bool galleryFullResolution() const { return galleryFullResolution_; }
     [[nodiscard]] QString galleryInfoText() const { return galleryInfoText_; }

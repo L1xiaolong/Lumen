@@ -1,6 +1,7 @@
 #include "io/camera_raw_decoder.h"
 #include "core/bayer_image_renderer.h"
 #include "io/encoded_color_management.h"
+#include "io/qt_image_decoder.h"
 
 #include <QBuffer>
 #include <QColorSpace>
@@ -76,9 +77,9 @@ QImage processedImageToQImage(const libraw_processed_image_t& processed, QString
         QBuffer buffer(&encoded);
         buffer.open(QIODevice::ReadOnly);
         QImageReader reader(&buffer, "JPEG");
-        reader.setAutoTransform(true);
+        reader.setAutoTransform(QtImageDecoder::autoOrientationEnabled());
         if (hasExifTransform) {
-            *hasExifTransform = reader.transformation() != QImageIOHandler::TransformationNone;
+            *hasExifTransform = reader.autoTransform() && reader.transformation() != QImageIOHandler::TransformationNone;
         }
         QImage image = reader.read();
         if (request.isCancelled()) {
@@ -160,7 +161,66 @@ QImage processedImageToQImage(const libraw_processed_image_t& processed, QString
     return result;
 }
 
-ImageMetadata metadataFor(const QString& path, const LibRaw& processor) {
+void addSensorProperties(ImageMetadata& metadata, LibRaw& processor) {
+    const auto& data = processor.imgdata;
+    ImageMetadata::PropertyGroup sensor{QStringLiteral("camera-raw-sensor"),
+        QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "RAW sensor")), {}, {}};
+    const auto add = [&](QString label, QString value) {
+        sensor.properties.append({std::move(label), std::move(value), {}});
+    };
+    const auto& sizes = data.sizes;
+    const auto& color = data.color;
+    const auto& identity = data.idata;
+    const auto dimensions = [](unsigned width, unsigned height) {
+        return QStringLiteral("%1 × %2 px").arg(width).arg(height);
+    };
+    const auto values = [](const auto& items, qsizetype count) {
+        QStringList result;
+        for (qsizetype i = 0; i < count; ++i) result.append(QString::number(items[i], 'g', 8));
+        return result.join(QStringLiteral(", "));
+    };
+    if (sizes.raw_width && sizes.raw_height)
+        add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Sensor dimensions")), dimensions(sizes.raw_width, sizes.raw_height));
+    if (sizes.width && sizes.height) {
+        add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Active dimensions")), dimensions(sizes.width, sizes.height));
+        add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Active origin")), QStringLiteral("(%1, %2)").arg(sizes.left_margin).arg(sizes.top_margin));
+    }
+    if (sizes.raw_pitch) add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Sensor row stride")), QStringLiteral("%1 B").arg(sizes.raw_pitch));
+    if (sizes.pixel_aspect > 0.0) add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Pixel aspect ratio")), QString::number(sizes.pixel_aspect, 'g', 8));
+    if (identity.raw_count) add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "RAW image count")), QString::number(identity.raw_count));
+    if (color.raw_bps) add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Sensor bit depth")), QString::number(color.raw_bps));
+    if (identity.colors > 0) add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Sensor colors")), QString::number(identity.colors));
+    if (identity.filters) {
+        add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "CFA colors")), QString::fromLatin1(identity.cdesc));
+        QStringList rows;
+        const int period = identity.filters == 9 ? 6 : 2;
+        for (int y = 0; y < period; ++y) {
+            QString row;
+            for (int x = 0; x < period; ++x) {
+                const int index = processor.COLOR(y, x);
+                row.append(index >= 0 && index < 4 && identity.cdesc[index]
+                    ? QLatin1Char(identity.cdesc[index]) : QLatin1Char('?'));
+            }
+            rows.append(row);
+        }
+        add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "CFA pattern")), rows.join(QStringLiteral(" / ")));
+    }
+    add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Black level")), QString::number(color.black));
+    add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Channel black offsets")), QStringLiteral("%1, %2, %3, %4")
+        .arg(color.cblack[0]).arg(color.cblack[1]).arg(color.cblack[2]).arg(color.cblack[3]));
+    if (color.maximum) add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Saturation level")), QString::number(color.maximum));
+    if (color.cam_mul[0] > 0.0f) add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "As-shot white balance")), values(color.cam_mul, 4));
+    if (color.pre_mul[0] > 0.0f) add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Daylight white balance")), values(color.pre_mul, 4));
+    if (color.profile_length) add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Embedded ICC size")), QStringLiteral("%1 B").arg(color.profile_length));
+    if (identity.dng_version) {
+        const auto version = identity.dng_version;
+        add(QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "DNG version")), QStringLiteral("%1.%2.%3.%4")
+            .arg(version >> 24).arg((version >> 16) & 255).arg((version >> 8) & 255).arg(version & 255));
+    }
+    metadata.formatProperties.append(std::move(sensor));
+}
+
+ImageMetadata metadataFor(const QString& path, LibRaw& processor, bool includeSensorProperties) {
     const QFileInfo fileInfo(path);
     ImageMetadata metadata;
     metadata.path = fileInfo.absoluteFilePath();
@@ -196,6 +256,7 @@ ImageMetadata metadataFor(const QString& path, const LibRaw& processor) {
                                 ? processor.imgdata.sizes.iheight
                                 : processor.imgdata.sizes.height;
     metadata.sourceSize = {imageWidth, imageHeight};
+    if (includeSensorProperties) addSensorProperties(metadata, processor);
     return metadata;
 }
 
@@ -212,24 +273,68 @@ ImageOrientation cameraOrientation(int flip) {
     }
 }
 
-std::optional<RawImageParameters> rawParametersFor(LibRaw& processor) {
+bool hasChannelBlackCalibration(const libraw_colordata_t& color) {
+    return std::any_of(std::begin(color.cblack) + 1, std::begin(color.cblack) + 4,
+                       [&](unsigned level) { return level != color.cblack[0]; }) ||
+           (color.cblack[4] != 0 && color.cblack[5] != 0);
+}
+
+QRect cameraImageArea(const libraw_data_t& data) {
+    const auto& sizes = data.sizes;
+    const QRect active(0, 0, sizes.width, sizes.height);
+    if (data.idata.dng_version) {
+        // LibRaw exposes DNG DefaultCrop and DefaultUserCrop in absolute sensor coordinates.
+        for (int index : {1, 0}) {
+            const auto& crop = sizes.raw_inset_crops[index];
+            const QRect relative(int(crop.cleft) - sizes.left_margin, int(crop.ctop) - sizes.top_margin,
+                                 crop.cwidth, crop.cheight);
+            if (relative.isValid() && active.contains(relative)) return relative;
+        }
+    }
+    return active;
+}
+
+QImage cropDevelopedImage(QImage image, const QRect& area, const QSize& active, ImageOrientation orientation) {
+    if (area == QRect(QPoint{}, active) || image.isNull()) return image;
+    const QSize oriented = orientedImageSize(active, orientation);
+    auto inverse = orientation;
+    if (orientation == ImageOrientation::Rotate90Clockwise) inverse = ImageOrientation::Rotate270Clockwise;
+    if (orientation == ImageOrientation::Rotate270Clockwise) inverse = ImageOrientation::Rotate90Clockwise;
+    const QPoint first = displayToSourcePixel(area.topLeft(), oriented, inverse);
+    const QPoint last = displayToSourcePixel(area.bottomRight(), oriented, inverse);
+    const QRect whole(QPoint(std::min(first.x(), last.x()), std::min(first.y(), last.y())),
+                      QPoint(std::max(first.x(), last.x()), std::max(first.y(), last.y())));
+    const auto x = [&](int column) { return qRound(double(column) * image.width() / oriented.width()); };
+    const auto y = [&](int row) { return qRound(double(row) * image.height() / oriented.height()); };
+    const int left = std::min(x(whole.left()), image.width() - 1);
+    const int top = std::min(y(whole.top()), image.height() - 1);
+    return image.copy(left, top, std::max(1, x(whole.right() + 1) - left),
+                      std::max(1, y(whole.bottom() + 1) - top));
+}
+
+std::optional<RawImageParameters> rawParametersFor(LibRaw& processor, const QRect& area, bool applyOrientation) {
     const auto& sizes = processor.imgdata.sizes;
-    const int width = sizes.iwidth > 0 ? sizes.iwidth : sizes.width;
-    const int height = sizes.iheight > 0 ? sizes.iheight : sizes.height;
-    if (width <= 0 || height <= 0 || processor.imgdata.idata.filters == 0) {
+    const int width = area.width();
+    const int height = area.height();
+    const auto& identity = processor.imgdata.idata;
+    if (width <= 0 || height <= 0 || identity.filters == 0 || identity.filters == 9 || identity.colors != 3) {
         return std::nullopt;
     }
 
-    const int cfa[4] = {processor.COLOR(0, 0), processor.COLOR(0, 1),
-                        processor.COLOR(1, 0), processor.COLOR(1, 1)};
+    const int x = area.x(), y = area.y();
+    const auto colorAt = [&](int dy, int dx) {
+        const int channel = processor.COLOR(y + dy, x + dx);
+        return channel == 3 ? 1 : channel;
+    };
+    const int cfa[4] = {colorAt(0, 0), colorAt(0, 1), colorAt(1, 0), colorAt(1, 1)};
     BayerPattern pattern;
-    if (cfa[0] == 0 && cfa[1] == 1 && cfa[2] == 3 && cfa[3] == 2) {
+    if (cfa[0] == 0 && cfa[1] == 1 && cfa[2] == 1 && cfa[3] == 2) {
         pattern = BayerPattern::RGGB;
-    } else if (cfa[0] == 1 && cfa[1] == 0 && cfa[2] == 2 && cfa[3] == 3) {
+    } else if (cfa[0] == 1 && cfa[1] == 0 && cfa[2] == 2 && cfa[3] == 1) {
         pattern = BayerPattern::GRBG;
-    } else if (cfa[0] == 3 && cfa[1] == 2 && cfa[2] == 0 && cfa[3] == 1) {
+    } else if (cfa[0] == 1 && cfa[1] == 2 && cfa[2] == 0 && cfa[3] == 1) {
         pattern = BayerPattern::GBRG;
-    } else if (cfa[0] == 2 && cfa[1] == 3 && cfa[2] == 1 && cfa[3] == 0) {
+    } else if (cfa[0] == 2 && cfa[1] == 1 && cfa[2] == 1 && cfa[3] == 0) {
         pattern = BayerPattern::BGGR;
     } else {
         return std::nullopt;
@@ -243,7 +348,7 @@ std::optional<RawImageParameters> rawParametersFor(LibRaw& processor) {
                             : static_cast<qsizetype>(width) * static_cast<qsizetype>(sizeof(quint16));
     parameters.bayerPattern = pattern;
     parameters.demosaic = true;
-    parameters.orientation = cameraOrientation(sizes.flip);
+    parameters.orientation = applyOrientation ? cameraOrientation(sizes.flip) : ImageOrientation::Normal;
 
     const unsigned maximum = processor.imgdata.color.maximum;
     if (maximum > 0 && maximum <= 65535) {
@@ -254,8 +359,9 @@ std::optional<RawImageParameters> rawParametersFor(LibRaw& processor) {
         }
         parameters.validBitsOverride = validBits;
     }
-    parameters.blackLevel = static_cast<int>(std::min<unsigned>(processor.imgdata.color.black,
-                                                                 65534u));
+    const auto& color = processor.imgdata.color;
+    const auto uniformBlack = hasChannelBlackCalibration(color) ? 0u : color.cblack[0];
+    parameters.blackLevel = static_cast<int>(std::min<quint64>(quint64(color.black) + uniformBlack, 65534u));
     if (parameters.whiteLevel > parameters.blackLevel) {
         parameters.whiteLevel = std::max(parameters.whiteLevel, parameters.blackLevel + 1);
     }
@@ -366,7 +472,7 @@ DecodeResult frameFromImage(QImage image, ImageMetadata metadata,
 // Copies the sensor mosaic LibRaw unpacked so exact probes can read true sensor samples.
 // The probe uses the same active rectangle as LibRaw, starting at (left_margin, top_margin).
 std::shared_ptr<PlaneBufferSet> mosaicPlanes(LibRaw& processor,
-                                            const RawImageParameters& parameters) {
+                                            const RawImageParameters& parameters, const QRect& imageArea) {
     const auto& sizes = processor.imgdata.sizes;
     const auto& rawdata = processor.imgdata.rawdata;
     const unsigned filters = processor.imgdata.idata.filters;
@@ -376,7 +482,7 @@ std::shared_ptr<PlaneBufferSet> mosaicPlanes(LibRaw& processor,
         (sizes.raw_pitch % sizeof(quint16)) != 0) {
         return {};
     }
-    const QRect crop(sizes.left_margin, sizes.top_margin, sizes.width, sizes.height);
+    const QRect crop = imageArea.translated(sizes.left_margin, sizes.top_margin);
     const QByteArray packed = packedMosaicPlane(
         reinterpret_cast<const quint16*>(rawdata.raw_image),
         static_cast<qsizetype>(sizes.raw_pitch / sizeof(quint16)),
@@ -405,8 +511,11 @@ void applyProcessingParameters(RawImageParameters& parameters, const RawImagePar
 
 DecodeResult decodeWithLibRaw(const DecodeRequest& request) {
     const QFileInfo sourceInfo(request.path);
-    const QString sourceKey = QStringLiteral("camera:%1:%2:%3")
-        .arg(sourceInfo.absoluteFilePath()).arg(sourceInfo.size()).arg(sourceInfo.lastModified().toMSecsSinceEpoch());
+    const bool applyOrientation = QtImageDecoder::autoOrientationEnabled();
+    const bool applyEmbeddedColor = EncodedColorManagement::isEnabled();
+    const QString sourceKey = QStringLiteral("camera:%1:%2:%3:%4:%5")
+        .arg(sourceInfo.absoluteFilePath()).arg(sourceInfo.size()).arg(sourceInfo.lastModified().toMSecsSinceEpoch())
+        .arg(applyOrientation).arg(applyEmbeddedColor);
     // Reuse only routes that already develop the sensor plane. A plain preview
     // still uses the camera's embedded rendering, as it did before source caching.
     if (request.sourceCache && (request.purpose == DecodePurpose::Full ||
@@ -450,20 +559,30 @@ DecodeResult decodeWithLibRaw(const DecodeRequest& request) {
     processor->set_progress_handler([](void* context, enum LibRaw_progress, int, int) {
         return static_cast<const DecodeRequest*>(context)->isCancelled() ? 1 : 0;
     }, const_cast<DecodeRequest*>(&request));
-    const int opened = openFile(*processor, request.path);
+    const auto openForDevelopment = [&] {
+        // LibRaw chooses the file's camera matrix during open_file().
+        processor->imgdata.params.use_camera_wb = 1;
+        processor->imgdata.params.use_camera_matrix = applyEmbeddedColor ? 1 : 0;
+        return openFile(*processor, request.path);
+    };
+    const int opened = openForDevelopment();
     if (opened != LIBRAW_SUCCESS) {
         return {{}, QStringLiteral("LibRaw could not open %1: %2")
                         .arg(sourceInfo.fileName(), libRawError(opened))};
     }
-    ImageMetadata metadata = metadataFor(request.path, *processor);
-    std::optional<RawImageParameters> rawParameters = rawParametersFor(*processor);
+    ImageMetadata metadata = metadataFor(request.path, *processor, request.purpose == DecodePurpose::Full);
+    const QRect declaredArea = cameraImageArea(processor->imgdata);
+    const QSize declaredActive(processor->imgdata.sizes.width, processor->imgdata.sizes.height);
+    const bool hasDefaultCrop = declaredArea.size() != declaredActive;
+    std::optional<RawImageParameters> rawParameters = rawParametersFor(*processor, declaredArea, applyOrientation);
     // The RAW parameters editor owns processing values and the optional Quad Bayer sampling
     // override; the file owns dimensions and the base CFA phase.
     if (rawParameters && request.rawParameters) {
         applyProcessingParameters(*rawParameters, *request.rawParameters);
     }
-    const ImageOrientation orientation = cameraOrientation(processor->imgdata.sizes.flip);
-    metadata.sourceSize = orientedImageSize(metadata.sourceSize, orientation);
+    const ImageOrientation fileOrientation = cameraOrientation(processor->imgdata.sizes.flip);
+    const ImageOrientation orientation = applyOrientation ? fileOrientation : ImageOrientation::Normal;
+    metadata.sourceSize = orientedImageSize(hasDefaultCrop ? declaredArea.size() : metadata.sourceSize, orientation);
 
     // Un-demosaiced camera RAW renders the sensor mosaic itself, exactly like the headerless RAW
     // path, instead of LibRaw's already-demosaiced bitmap. Preview frames drop the mosaic so the
@@ -477,7 +596,8 @@ DecodeResult decodeWithLibRaw(const DecodeRequest& request) {
         if (!request.prepareAllocation(estimatedPixelBytes(
                 thumbSize.isValid() ? thumbSize : metadata.sourceSize, 48)))
             return {{}, QStringLiteral("Cancelled")};
-        if (processor->unpack_thumb() == LIBRAW_SUCCESS) {
+        if (!hasDefaultCrop && (applyOrientation || fileOrientation == ImageOrientation::Normal) &&
+            processor->unpack_thumb() == LIBRAW_SUCCESS) {
             int imageError = LIBRAW_SUCCESS;
             ProcessedImage processed(processor->dcraw_make_mem_thumb(&imageError));
             if (processed && imageError == LIBRAW_SUCCESS) {
@@ -504,7 +624,7 @@ DecodeResult decodeWithLibRaw(const DecodeRequest& request) {
         // A RAW without an embedded preview still remains viewable. Reopen because
         // failed thumbnail extraction can leave the processor in a progressed state.
         processor->recycle();
-        const int reopened = openFile(*processor, request.path);
+        const int reopened = openForDevelopment();
         if (reopened != LIBRAW_SUCCESS) {
             return {{}, QStringLiteral("LibRaw could not reopen the RAW file: %1")
                             .arg(libRawError(reopened))};
@@ -516,7 +636,9 @@ DecodeResult decodeWithLibRaw(const DecodeRequest& request) {
     // quantizing every value to 8-bit display units.
     processor->imgdata.params.output_bps = 16;
     processor->imgdata.params.output_color = 1;
-    processor->imgdata.params.use_camera_wb = 1;
+    processor->imgdata.params.gamm[0] = 1.0 / 2.4;
+    processor->imgdata.params.gamm[1] = 12.92;
+    if (!applyOrientation) processor->imgdata.params.user_flip = 0;
     if (request.isCancelled()) return {{}, QStringLiteral("Cancelled")};
     const QSize rawSize(processor->imgdata.sizes.raw_width, processor->imgdata.sizes.raw_height);
     if (!request.prepareAllocation(estimatedPixelBytes(rawSize, 48)))
@@ -527,26 +649,29 @@ DecodeResult decodeWithLibRaw(const DecodeRequest& request) {
                         .arg(sourceInfo.fileName(), libRawError(code))};
     }
     // LibRaw can measure the black level from masked pixels only after unpacking.
-    const auto nativeProcessing = rawParametersFor(*processor);
+    const QSize active(processor->imgdata.sizes.width, processor->imgdata.sizes.height);
+    const QRect area = cameraImageArea(processor->imgdata);
+    if (area.size() != active) metadata.sourceSize = orientedImageSize(area.size(), orientation);
+    const auto nativeProcessing = rawParametersFor(*processor, area, applyOrientation);
+    const bool channelBlack = hasChannelBlackCalibration(processor->imgdata.color);
+    // LibRaw can apply channel-specific and repeating black corrections. Keep its developed
+    // bitmap for files requiring them, with the unmodified mosaic retained for source probing.
+    const bool useLibRawDevelopment = channelBlack && !request.rawParameters;
     rawParameters = nativeProcessing;
     if (rawParameters && request.rawParameters) {
         applyProcessingParameters(*rawParameters, *request.rawParameters);
     }
     std::shared_ptr<PlaneBufferSet> mosaic;
     if (rawParameters && (request.purpose == DecodePurpose::Full || developPreview)) {
-        mosaic = mosaicPlanes(*processor, *rawParameters);
+        mosaic = mosaicPlanes(*processor, *rawParameters, area);
         if (mosaic) {
-            // LibRaw's COLOR() uses coordinates relative to this active crop.
-            const auto& sizes = processor->imgdata.sizes;
-            const QRect crop(sizes.left_margin, sizes.top_margin, sizes.width, sizes.height);
-            rawParameters->size = crop.size();
-            rawParameters->rowStride = static_cast<qsizetype>(crop.width()) * 2;
+            rawParameters->rowStride = static_cast<qsizetype>(area.width()) * 2;
             rawParameters->chromaStride = 0;
             rawParameters->msbAligned = false;
         }
     }
 
-    if (mosaic && rawParameters && request.sourceCache && !request.isCancelled()) {
+    if (mosaic && rawParameters && !channelBlack && request.sourceCache && !request.isCancelled()) {
         auto source = std::make_shared<SourceFrame>();
         source->planes = std::make_shared<PlaneBufferSet>(*mosaic);
         source->parameters = rawParameters;
@@ -577,7 +702,7 @@ DecodeResult decodeWithLibRaw(const DecodeRequest& request) {
         }
     }
 
-    if (mosaic && rawParameters && rawParameters->demosaic &&
+    if (mosaic && rawParameters && rawParameters->demosaic && !useLibRawDevelopment &&
         (request.purpose == DecodePurpose::Full || developPreview)) {
         const QSize maximum = request.maximumSize.isEmpty() && !request.requireDisplayImage ? QSize(960, 720)
                                                              : request.maximumSize;
@@ -616,6 +741,7 @@ DecodeResult decodeWithLibRaw(const DecodeRequest& request) {
     if (image.isNull()) {
         return {{}, conversionError};
     }
+    image = cropDevelopedImage(std::move(image), area, active, orientation);
     // A full decode is the final answer: the frame either carries source planes, the sensor
     // mosaic, or the decoder's own processed samples. Only bounded proxies stay pending.
     DecodeResult result = frameFromImage(std::move(image), std::move(metadata),
@@ -643,9 +769,10 @@ QStringList CameraRawDecoder::supportedSuffixes() {
 
 QString CameraRawDecoder::cacheIdentity() const {
 #if MVPVIEW_HAS_LIBRAW
-    return QStringLiteral("camera-raw-v10|libraw-%1|display-%2")
+    return QStringLiteral("camera-raw-v11|libraw-%1|display-%2|orientation-%3|embedded-%4")
         .arg(QString::fromLatin1(libraw_version()),
-             displayColorSpaceKey(currentDisplayColorSpace()));
+             displayColorSpaceKey(currentDisplayColorSpace()))
+        .arg(QtImageDecoder::autoOrientationEnabled()).arg(EncodedColorManagement::isEnabled());
 #else
     return QStringLiteral("camera-raw-disabled");
 #endif

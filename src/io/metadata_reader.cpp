@@ -1,17 +1,22 @@
 #include "io/metadata_reader.h"
 
 #include "io/metadata_exiv2_lock.h"
+#include "io/native_metadata.h"
 
 #include <QCache>
 #include <QDateTime>
 #include <QFile>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QStringList>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
+#include <string_view>
 
 #if MVPVIEW_HAS_EXIV2
 #include <exiv2/exiv2.hpp>
@@ -24,7 +29,7 @@ namespace {
 
 constexpr qsizetype kMaximumTextLength = 4096;
 constexpr qsizetype kMaximumWarningLength = 512;
-constexpr int kMaximumCachedMetadataEntries = 256;
+constexpr int kMaximumCachedMetadataKiB = 8192;
 
 struct CachedMetadata {
     QString readerName;
@@ -34,6 +39,7 @@ struct CachedMetadata {
     bool gpsPresent = false;
     std::optional<ImageMetadata::Camera> camera;
     std::optional<ImageMetadata::Descriptive> descriptive;
+    QVector<ImageMetadata::PropertyGroup> properties;
 };
 
 QString cacheKey(const ImageMetadata& metadata) {
@@ -52,12 +58,22 @@ void applyCached(const CachedMetadata& cached, ImageMetadata& metadata) {
     metadata.gpsMetadataPresent = cached.gpsPresent;
     metadata.camera = cached.camera;
     metadata.descriptive = cached.descriptive;
+    metadata.embeddedProperties = cached.properties;
 }
 
 CachedMetadata cachedFrom(const ImageMetadata& metadata) {
     return {metadata.metadataReaderName, metadata.metadataReaderVersion, metadata.metadataWarning,
             metadata.sourceOrientation,  metadata.gpsMetadataPresent,    metadata.camera,
-            metadata.descriptive};
+            metadata.descriptive, metadata.embeddedProperties};
+}
+
+int cacheCost(const ImageMetadata& metadata) {
+    qsizetype bytes = 1024;
+    for (const auto& group : metadata.embeddedProperties) {
+        for (const auto& property : group.properties)
+            bytes += 128 + 2 * (property.name.size() + property.value.size() + property.type.size());
+    }
+    return static_cast<int>(std::min<qsizetype>((bytes + 1023) / 1024, kMaximumCachedMetadataKiB + 1));
 }
 
 QString sanitized(QString text, qsizetype maximumLength = kMaximumTextLength) {
@@ -87,6 +103,43 @@ QString textFrom(const Exiv2::Metadatum& datum) {
     } catch (const std::exception&) {
         return {};
     }
+}
+
+template <typename Data>
+void addTags(ImageMetadata& metadata, const Data& data, const QString& id, const QString& title,
+             auto include) {
+    ImageMetadata::PropertyGroup group{id, title, {}, {}, true};
+    for (const auto& datum : data) {
+        if (!include(datum)) continue;
+        const auto bytes = datum.size();
+        auto value = (datum.typeId() == Exiv2::undefined && bytes > 64) || bytes > 64 * 1024
+            ? QStringLiteral("%1 B").arg(bytes) : textFrom(datum);
+        if (value.isEmpty()) value = QStringLiteral("%1 B").arg(bytes);
+        const char* type = datum.typeName();
+        group.properties.append({QString::fromUtf8(datum.key()), std::move(value),
+                                 type ? QString::fromLatin1(type) : QString{}});
+    }
+    if (!group.properties.isEmpty()) {
+        std::stable_sort(group.properties.begin(), group.properties.end(), [](const auto& a, const auto& b) {
+            return a.name < b.name;
+        });
+        metadata.embeddedProperties.append(std::move(group));
+    }
+}
+
+bool isDngCalibrationTag(const Exiv2::Exifdatum& datum) {
+    const std::string name = datum.tagName();
+    static constexpr std::array<std::string_view, 41> names{
+        "DNGVersion", "DNGBackwardVersion", "UniqueCameraModel", "LocalizedCameraModel",
+        "CFARepeatPatternDim", "CFAPattern", "CFAPlaneColor", "CFALayout", "LinearizationTable",
+        "BlackLevelRepeatDim", "BlackLevel", "BlackLevelDeltaH", "BlackLevelDeltaV", "WhiteLevel",
+        "DefaultScale", "DefaultCropOrigin", "DefaultCropSize", "DefaultUserCrop", "ActiveArea",
+        "MaskedAreas", "ColorMatrix1", "ColorMatrix2", "ColorMatrix3", "CameraCalibration1",
+        "CameraCalibration2", "CameraCalibration3", "ReductionMatrix1", "ReductionMatrix2",
+        "ReductionMatrix3", "AnalogBalance", "AsShotNeutral", "AsShotWhiteXY", "BaselineExposure",
+        "BaselineNoise", "BaselineSharpness", "CalibrationIlluminant1", "CalibrationIlluminant2",
+        "CalibrationIlluminant3", "ForwardMatrix1", "ForwardMatrix2", "ForwardMatrix3"};
+    return std::ranges::find(names, std::string_view(name)) != names.end();
 }
 
 QString exifText(const Exiv2::ExifData& data, const char* key) {
@@ -276,7 +329,7 @@ void mapCamera(const Exiv2::ExifData& exif, const Exiv2::XmpData& xmp, ImageMeta
     camera.aperture = numericValue(exif, Exiv2::ExifKey("Exif.Photo.FNumber"));
     camera.focalLengthMm = numericValue(exif, Exiv2::ExifKey("Exif.Photo.FocalLength"));
     const double iso = numericValue(exif, Exiv2::ExifKey("Exif.Photo.ISOSpeedRatings"));
-    camera.iso = iso > 0.0 ? static_cast<int>(std::lround(iso)) : 0;
+    camera.iso = iso > 0.0 && iso <= std::numeric_limits<int>::max() ? static_cast<int>(std::lround(iso)) : 0;
     camera.exposureProgram = exposureProgramText(
         static_cast<int>(numericValue(exif, Exiv2::ExifKey("Exif.Photo.ExposureProgram"))));
     camera.meteringMode = meteringModeText(
@@ -288,6 +341,18 @@ void mapCamera(const Exiv2::ExifData& exif, const Exiv2::XmpData& xmp, ImageMeta
     const auto flash = optionalNumericValue(exif, Exiv2::ExifKey("Exif.Photo.Flash"));
     camera.flash = flash ? flashText(static_cast<int>(std::lround(*flash))) : QString{};
     camera.gps = gpsText(exif);
+    if (metadata.camera) {
+        const auto& source = *metadata.camera;
+        camera.sensorSize = source.sensorSize;
+        if (camera.make.isEmpty()) camera.make = source.make;
+        if (camera.model.isEmpty()) camera.model = source.model;
+        if (camera.lens.isEmpty()) camera.lens = source.lens;
+        if (!camera.capturedAt.isValid()) camera.capturedAt = source.capturedAt;
+        if (camera.exposureSeconds <= 0.0) camera.exposureSeconds = source.exposureSeconds;
+        if (camera.aperture <= 0.0) camera.aperture = source.aperture;
+        if (camera.focalLengthMm <= 0.0) camera.focalLengthMm = source.focalLengthMm;
+        if (camera.iso <= 0) camera.iso = source.iso;
+    }
     if (!camera.make.isEmpty() || !camera.model.isEmpty() || !camera.lens.isEmpty() ||
         !camera.software.isEmpty() || camera.capturedAt.isValid() || camera.exposureSeconds > 0.0 ||
         camera.aperture > 0.0 || camera.focalLengthMm > 0.0 || camera.iso > 0 ||
@@ -342,13 +407,29 @@ void MetadataReader::enrich(const QString& path, ImageMetadata& metadata) {
 #if MVPVIEW_HAS_EXIV2
     // XMP has process-global initialization state. Serializing this optional adapter keeps
     // decoding deterministic until profiling justifies a narrower lock.
-    static QCache<QString, CachedMetadata> cache(kMaximumCachedMetadataEntries);
-    const std::scoped_lock lock(exiv2MetadataMutex());
+    static QCache<QString, CachedMetadata> cache(kMaximumCachedMetadataKiB);
     const QString key = cacheKey(metadata);
+    {
+        const std::scoped_lock lock(exiv2MetadataMutex());
+        if (const CachedMetadata* cached = cache.object(key)) {
+            applyCached(*cached, metadata);
+            return;
+        }
+    }
+    const bool readTags = readNativeMetadata(path, metadata);
+    const std::scoped_lock lock(exiv2MetadataMutex());
     if (const CachedMetadata* cached = cache.object(key)) {
         applyCached(*cached, metadata);
         return;
     }
+    const auto suffix = QFileInfo(path).suffix().toLower();
+    if (!readTags ||
+        ((suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv")) &&
+         metadata.decoderName != QStringLiteral("LibRaw"))) {
+        cache.insert(key, new CachedMetadata(cachedFrom(metadata)), cacheCost(metadata));
+        return;
+    }
+    const auto nativeWarning = metadata.metadataWarning;
     metadata.metadataReaderName = QStringLiteral("Exiv2");
     metadata.metadataReaderVersion = version();
     try {
@@ -382,13 +463,23 @@ void MetadataReader::enrich(const QString& path, ImageMetadata& metadata) {
         const Exiv2::IptcData& iptc = image->iptcData();
         const Exiv2::XmpData& xmp = image->xmpData();
         const double orientation = numericValue(exif, Exiv2::ExifKey("Exif.Image.Orientation"));
-        if (orientation >= 1.0 && orientation <= 8.0) {
+        if (metadata.sourceOrientation == ImageMetadata::Orientation::Unspecified &&
+            orientation >= 1.0 && orientation <= 8.0) {
             metadata.sourceOrientation =
                 static_cast<ImageMetadata::Orientation>(static_cast<int>(orientation));
         }
         metadata.gpsMetadataPresent = hasGpsMetadata(exif, xmp);
         mapCamera(exif, xmp, metadata);
         mapDescription(exif, iptc, xmp, metadata);
+        const bool dng = suffix == QStringLiteral("dng");
+        const auto maker = [](const Exiv2::Exifdatum& datum) { return Exiv2::ExifTags::isMakerGroup(datum.groupName()); };
+        const auto all = [](const auto&) { return true; };
+        if (dng) addTags(metadata, exif, QStringLiteral("dng-tags"), QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "DNG calibration")), isDngCalibrationTag);
+        addTags(metadata, exif, QStringLiteral("exif-tags"), QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "EXIF tags")),
+                [&](const Exiv2::Exifdatum& datum) { return !maker(datum) && !(dng && isDngCalibrationTag(datum)); });
+        addTags(metadata, exif, QStringLiteral("maker-tags"), QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "Camera maker notes")), maker);
+        addTags(metadata, iptc, QStringLiteral("iptc-tags"), QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "IPTC tags")), all);
+        addTags(metadata, xmp, QStringLiteral("xmp-tags"), QStringLiteral(QT_TRANSLATE_NOOP("ImageProperties", "XMP tags")), all);
     } catch (const Exiv2::Error& error) {
         metadata.metadataWarning =
             sanitized(metadataErrorText(error.what()), kMaximumWarningLength);
@@ -398,10 +489,11 @@ void MetadataReader::enrich(const QString& path, ImageMetadata& metadata) {
     } catch (...) {
         metadata.metadataWarning = QStringLiteral("Unknown metadata parsing error");
     }
-    cache.insert(key, new CachedMetadata(cachedFrom(metadata)));
+    if (!nativeWarning.isEmpty() && !metadata.metadataWarning.startsWith(nativeWarning))
+        metadata.metadataWarning.prepend(nativeWarning + QLatin1Char('\n'));
+    cache.insert(key, new CachedMetadata(cachedFrom(metadata)), cacheCost(metadata));
 #else
-    Q_UNUSED(path)
-    Q_UNUSED(metadata)
+    readNativeMetadata(path, metadata);
 #endif
 }
 

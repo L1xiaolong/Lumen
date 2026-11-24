@@ -1385,7 +1385,9 @@ void BrowseController::applyGalleryFrame(const ImageFramePtr& frame, bool fullRe
     else galleryUpgradeTimer_->stop();
     if (frame) {
         const RawPlaneAccessor raw(*frame);
-        if (raw.isValid()) {
+        if (frame->descriptor.presentationSize.isValid()) {
+            galleryImageSize_ = frame->descriptor.presentationSize;
+        } else if (raw.isValid()) {
             galleryImageSize_ = raw.displaySize();
         } else if (fullResolution) {
             if (const QImage* image = frame->qImage()) {
@@ -1406,11 +1408,12 @@ void BrowseController::applyGalleryFrame(const ImageFramePtr& frame, bool fullRe
         if (!galleryImageSize_.isValid()) {
             galleryImageSize_ = frame->descriptor.size;
         }
+        const QSize nativeSize = galleryHasPresentationSize() ? frame->metadata.sourceSize : galleryImageSize_;
         const int bits = std::max(1, frame->descriptor.validBits);
         galleryInfoText_ =
             QStringLiteral("%1 × %2  %3-bit  %4  %5")
-                .arg(galleryImageSize_.width())
-                .arg(galleryImageSize_.height())
+                .arg(nativeSize.width())
+                .arg(nativeSize.height())
                 .arg(bits)
                 .arg(frame->metadata.format.toUpper())
                 .arg(QLocale().formattedDataSize(frame->metadata.fileSize));
@@ -1428,12 +1431,15 @@ QString BrowseController::probeGalleryPixel(int x, int y) {
         return QCoreApplication::translate("FileOperations", "Loading pixel data…");
     }
 
-    const ComparisonPixelSample sample =
-        ComparisonPixelProbe::sampleAtDisplayPixel(*galleryFrame_, QPoint(x, y));
+    const bool hasPresentationSize = galleryHasPresentationSize();
+    const ComparisonPixelSample sample = hasPresentationSize
+        ? ComparisonPixelProbe::sampleAtLogicalPixel(*galleryFrame_, {x, y}, galleryImageSize_)
+        : ComparisonPixelProbe::sampleAtDisplayPixel(*galleryFrame_, {x, y});
     if (!sample.valid) {
         return {};
     }
-    return QStringLiteral("x %1 · y %2 · %3").arg(x).arg(y).arg(sample.sourceValueText());
+    const QPoint pixel = hasPresentationSize ? sample.sourcePixel : QPoint(x, y);
+    return QStringLiteral("x %1 · y %2 · %3").arg(pixel.x()).arg(pixel.y()).arg(sample.sourceValueText());
 }
 
 void BrowseController::setGridCellWidth(int width) {

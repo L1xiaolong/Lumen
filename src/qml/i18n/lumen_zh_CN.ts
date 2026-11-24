@@ -3402,6 +3402,234 @@ Returned to the previous folder.</source>
         <source>Analyzing histogram…</source>
         <translation>正在分析直方图…</translation>
     </message>
+        <message>
+            <source>OpenEXR container</source>
+            <translation>OpenEXR 容器</translation>
+        </message>
+        <message>
+            <source>OpenEXR header</source>
+            <translation>OpenEXR 文件头</translation>
+        </message>
+        <message>
+            <source>OpenEXR channels</source>
+            <translation>OpenEXR 通道</translation>
+        </message>
+        <message>
+            <source>File format version</source>
+            <translation>文件格式版本</translation>
+        </message>
+        <message>
+            <source>File flags</source>
+            <translation>文件标志位</translation>
+        </message>
+        <message>
+            <source>Part count</source>
+            <translation>分部数</translation>
+        </message>
+        <message>
+            <source>JPEG XL codestream</source>
+            <translation>JPEG XL 码流</translation>
+        </message>
+        <message>
+            <source>JPEG XL extra channels</source>
+            <translation>JPEG XL 附加通道</translation>
+        </message>
+        <message>
+            <source>JPEG XL encoded color</source>
+            <translation>JPEG XL 编码色彩</translation>
+        </message>
+        <message>
+            <source>JPEG XL container boxes</source>
+            <translation>JPEG XL 容器数据块</translation>
+        </message>
+        <message>
+            <source>Storage</source>
+            <translation>存储结构</translation>
+        </message>
+        <message>
+            <source>Encoded dimensions</source>
+            <translation>编码尺寸</translation>
+        </message>
+        <message>
+            <source>Exponent bits</source>
+            <translation>指数位数</translation>
+        </message>
+        <message>
+            <source>Color channels</source>
+            <translation>颜色通道数</translation>
+        </message>
+        <message>
+            <source>Extra channels</source>
+            <translation>附加通道数</translation>
+        </message>
+        <message>
+            <source>Original profile used</source>
+            <translation>使用原始色彩配置</translation>
+        </message>
+        <message>
+            <source>Alpha bit depth</source>
+            <translation>Alpha 位深</translation>
+        </message>
+        <message>
+            <source>Alpha exponent bits</source>
+            <translation>Alpha 指数位数</translation>
+        </message>
+        <message>
+            <source>Intensity target</source>
+            <translation>目标亮度</translation>
+        </message>
+        <message>
+            <source>Minimum luminance</source>
+            <translation>最低亮度</translation>
+        </message>
+        <message>
+            <source>Linear below</source>
+            <translation>线性映射阈值</translation>
+        </message>
+        <message>
+            <source>Relative to peak luminance</source>
+            <translation>相对于峰值亮度</translation>
+        </message>
+        <message>
+            <source>Intrinsic dimensions</source>
+            <translation>固有尺寸</translation>
+        </message>
+        <message>
+            <source>Preview dimensions</source>
+            <translation>预览尺寸</translation>
+        </message>
+        <message>
+            <source>Animation time base</source>
+            <translation>动画时基</translation>
+        </message>
+        <message>
+            <source>Animation loop count</source>
+            <translation>动画循环次数</translation>
+        </message>
+        <message>
+            <source>Animation time codes</source>
+            <translation>动画时间码</translation>
+        </message>
+        <message>
+            <source>ICC representation size</source>
+            <translation>ICC 表示大小</translation>
+        </message>
+        <message>
+            <source>Embedded ICC size</source>
+            <translation>内嵌 ICC 大小</translation>
+        </message>
+        <message>
+            <source>Color space</source>
+            <translation>色彩空间</translation>
+        </message>
+        <message>
+            <source>White point</source>
+            <translation>白点</translation>
+        </message>
+        <message>
+            <source>Red primary</source>
+            <translation>红原色</translation>
+        </message>
+        <message>
+            <source>Green primary</source>
+            <translation>绿原色</translation>
+        </message>
+        <message>
+            <source>Blue primary</source>
+            <translation>蓝原色</translation>
+        </message>
+        <message>
+            <source>Gamma</source>
+            <translation>伽马</translation>
+        </message>
+        <message>
+            <source>RAW sensor</source>
+            <translation>RAW 传感器</translation>
+        </message>
+        <message>
+            <source>Sensor dimensions</source>
+            <translation>传感器尺寸</translation>
+        </message>
+        <message>
+            <source>Active dimensions</source>
+            <translation>有效区域尺寸</translation>
+        </message>
+        <message>
+            <source>Active origin</source>
+            <translation>有效区域起点</translation>
+        </message>
+        <message>
+            <source>Sensor row stride</source>
+            <translation>传感器行跨度</translation>
+        </message>
+        <message>
+            <source>Pixel aspect ratio</source>
+            <translation>像素宽高比</translation>
+        </message>
+        <message>
+            <source>RAW image count</source>
+            <translation>RAW 图像数</translation>
+        </message>
+        <message>
+            <source>Sensor bit depth</source>
+            <translation>传感器位深</translation>
+        </message>
+        <message>
+            <source>Sensor colors</source>
+            <translation>传感器颜色数</translation>
+        </message>
+        <message>
+            <source>CFA colors</source>
+            <translation>滤色阵列颜色</translation>
+        </message>
+        <message>
+            <source>CFA pattern</source>
+            <translation>滤色阵列排列</translation>
+        </message>
+        <message>
+            <source>Channel black offsets</source>
+            <translation>各通道黑电平偏移</translation>
+        </message>
+        <message>
+            <source>Saturation level</source>
+            <translation>饱和电平</translation>
+        </message>
+        <message>
+            <source>As-shot white balance</source>
+            <translation>拍摄时白平衡</translation>
+        </message>
+        <message>
+            <source>Daylight white balance</source>
+            <translation>日光白平衡</translation>
+        </message>
+        <message>
+            <source>DNG version</source>
+            <translation>DNG 版本</translation>
+        </message>
+        <message>
+            <source>DNG calibration</source>
+            <translation>DNG 校准</translation>
+        </message>
+        <message>
+            <source>EXIF tags</source>
+            <translation>EXIF 标签</translation>
+        </message>
+        <message>
+            <source>IPTC tags</source>
+            <translation>IPTC 标签</translation>
+        </message>
+        <message>
+            <source>XMP tags</source>
+            <translation>XMP 标签</translation>
+        </message>
+        <message>
+            <source>Camera maker notes</source>
+            <translation>相机厂商标签</translation>
+        </message>
+        <message>
+            <source>Viewer color interpretation</source>
+            <translation>查看器采用的色彩空间</translation>
+        </message>
 </context>
 <context>
         <name>ImagePropertiesContent</name>
@@ -3470,7 +3698,19 @@ Returned to the previous folder.</source>
             <source>No capture or descriptive metadata is available.</source>
             <translation>此图像没有拍摄或描述元数据。</translation>
         </message>
-        </context>
+        <message>
+            <source>Show %1 (%2)</source>
+            <translation>展开 %1（%2）</translation>
+        </message>
+        <message>
+            <source>Hide %1 (%2)</source>
+            <translation>收起 %1（%2）</translation>
+        </message>
+        <message>
+            <source>Detailed metadata</source>
+            <translation>详细元数据</translation>
+        </message>
+</context>
 <context>
         <name>PropertiesHistogram</name>
         <message>

@@ -20,17 +20,28 @@ Item {
     readonly property string pendingLabel: qsTr("Analyzing…")
     readonly property string unavailableLabel: qsTr("Histogram unavailable")
     readonly property var statistics: !selectedChannelData ? [] : [
-        { id: "histogram-mean", label: qsTr("Mean"), value: Number(selectedChannelData.mean).toFixed(2), mono: true },
-        { id: "histogram-variance", label: qsTr("Variance"), value: Number(selectedChannelData.variance).toFixed(2), mono: true },
-        { id: "histogram-min", label: qsTr("Min"), value: String(selectedChannelData.min), mono: true },
-        { id: "histogram-max", label: qsTr("Max"), value: String(selectedChannelData.max), mono: true },
-        { id: "histogram-median", label: qsTr("Median"), value: Number(selectedChannelData.median).toFixed(1), mono: true }
+        { id: "histogram-mean", label: qsTr("Mean"), value: formatStatistic(selectedChannelData.mean, 2), mono: true },
+        { id: "histogram-variance", label: qsTr("Variance"), value: formatStatistic(selectedChannelData.variance, 2), mono: true },
+        { id: "histogram-min", label: qsTr("Min"), value: formatStatistic(selectedChannelData.min, 0), mono: true },
+        { id: "histogram-max", label: qsTr("Max"), value: formatStatistic(selectedChannelData.max, 0), mono: true },
+        { id: "histogram-median", label: qsTr("Median"), value: formatStatistic(selectedChannelData.median, 1), mono: true }
     ]
     onPendingLabelChanged: graph.requestPaint()
     onUnavailableLabelChanged: graph.requestPaint()
     onSelectedChannelChanged: graph.requestPaint()
     implicitHeight: layout.implicitHeight
     function channelName(channel) { return channel.name || "" }
+    function formatStatistic(value, decimals) {
+        const number = Number(value)
+        if (!histogramData.floatingPoint) return number.toFixed(decimals)
+        return Number.isInteger(number) ? String(number) : String(Number(number.toPrecision(6)))
+    }
+    function formatAxisValue(value) {
+        if (!histogramData.floatingPoint) return String(Math.round(value))
+        if (Math.abs(value) >= 10000 || (value !== 0 && Math.abs(value) < 0.001))
+            return value.toExponential(1)
+        return String(Number(value.toPrecision(4)))
+    }
     function requestHistogram() {
         if (active && controller && controller.path.length > 0) controller.requestHistogram(1)
     }
@@ -110,10 +121,13 @@ Item {
                     context.fillStyle = Theme.mutedInk
                     context.font = "12px \"" + (Theme.uiFont || "sans-serif") + "\""
                     context.textAlign = "center"
-                    const domain = Number(root.histogramData.maximumValue || 255)
+                    const minimum = Number(root.selectedChannelData?.axisMinimum ?? 0)
+                    const maximumValue = Number(root.selectedChannelData?.axisMaximum ?? root.histogramData.maximumValue ?? 255)
                     for (let tick = 0; tick <= 4; ++tick) {
-                        const x = left + (right - left) * tick / 4
-                        context.fillText(String(Math.round(domain * tick / 4)), x, height - 5)
+                        const fraction = tick / 4
+                        const x = left + (right - left) * fraction
+                        context.fillText(root.formatAxisValue(minimum * (1 - fraction) + maximumValue * fraction),
+                                         x, height - 5)
                     }
 
                     if (root.histogramData.loading === true) {

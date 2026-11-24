@@ -14,23 +14,38 @@ Column {
             required property int index
             required property var modelData
             objectName: "propertyField-" + (modelData.id || index)
+            readonly property bool stacked: width < 320 && !!modelData.type
             width: root.width
-            height: Math.max(36, Math.max(label.implicitHeight, valueBox.height) + 16)
-            Text {
+            height: Math.max(36, (stacked ? label.implicitHeight + valueBox.height + 4
+                                         : Math.max(label.implicitHeight, valueBox.height)) + 16)
+            Column {
                 id: label
                 x: 12
-                anchors.verticalCenter: parent.verticalCenter
-                width: Math.min(136, (row.width - 24) * 0.34)
-                text: row.modelData.label || ""
-                color: Theme.mutedInk
-                font.family: Theme.uiFont
-                font.pixelSize: 12
-                wrapMode: Text.Wrap
+                y: row.stacked ? 8 : Math.round((row.height - height) / 2)
+                width: row.stacked ? row.width - 24 : Math.min(172, (row.width - 24) * (row.modelData.type ? 0.46 : 0.38))
+                Text {
+                    id: labelText
+                    width: parent.width
+                    text: (row.modelData.label || "").replace(/\./g, ".\u200b")
+                    color: Theme.mutedInk
+                    font.family: Theme.uiFont
+                    font.pixelSize: 12
+                    wrapMode: Text.Wrap
+                }
+                Text {
+                    visible: text.length > 0
+                    width: parent.width
+                    text: row.modelData.type || ""
+                    color: Theme.mutedInk
+                    font.family: Theme.uiFont
+                    font.pixelSize: 10
+                    wrapMode: Text.WrapAnywhere
+                }
             }
             Item {
                 id: valueBox
-                x: label.x + label.width + 10
-                anchors.verticalCenter: parent.verticalCenter
+                x: row.stacked ? 12 : label.x + label.width + 10
+                y: row.stacked ? label.y + label.height + 4 : Math.round((row.height - height) / 2)
                 width: Math.max(20, row.width - x - 12)
                 height: row.modelData.matrix ? matrix.implicitHeight : valueText.implicitHeight
                 TextEdit {
@@ -43,13 +58,13 @@ Column {
                     readOnly: true
                     selectByMouse: true
                     activeFocusOnTab: true
-                    wrapMode: TextEdit.WrapAnywhere
+                    wrapMode: TextEdit.Wrap
                     color: Theme.graphiteInk
                     selectionColor: Theme.explorerSelectionBg
                     selectedTextColor: Theme.graphiteInk
                     font.family: Theme.uiFont
                     font.pixelSize: 12
-                    Accessible.name: label.text + ": " + text
+                    Accessible.name: (row.modelData.label || "") + ": " + text
                     Keys.onEscapePressed: root.forceActiveFocus()
                 }
                 Grid {

@@ -33,6 +33,9 @@ struct ColorDescriptor {
 
 struct ImageDescriptor {
     QSize size;
+    // Presentation grid for images whose samples do not have square display pixels.
+    // Storage and source dimensions still describe the decoded and encoded pixels.
+    QSize presentationSize;
     PixelLayout layout = PixelLayout::Interleaved;
     SampleType sampleType = SampleType::UInt;
     ChannelOrder channelOrder = ChannelOrder::RGBA;
@@ -86,6 +89,21 @@ struct ImageMetadata {
     QString metadataWarning;
     Orientation sourceOrientation = Orientation::Unspecified;
     bool gpsMetadataPresent = false;
+
+    struct Property {
+        QString name;
+        QString value;
+        QString type;
+    };
+    struct PropertyGroup {
+        QString id;
+        QString title;
+        QString detail;
+        QVector<Property> properties;
+        bool collapsed = false;
+    };
+    QVector<PropertyGroup> formatProperties;
+    QVector<PropertyGroup> embeddedProperties;
 
     struct Camera {
         QString make;

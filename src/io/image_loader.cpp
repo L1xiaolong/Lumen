@@ -183,6 +183,17 @@ LoadHandle ImageLoader::requestMetadata(quint64 id, ImageFramePtr frame, Callbac
                          RequestOptions{LoadCategory::Metadata, 0, QStringLiteral("metadata")});
 }
 
+LoadHandle ImageLoader::requestMetadata(quint64 id, const QString& path, Callback callback) {
+    auto frame = std::make_shared<ImageFrame>();
+    const QFileInfo file(path);
+    frame->metadata.path = path;
+    frame->metadata.fileName = file.fileName();
+    frame->metadata.format = file.suffix().toUpper();
+    frame->metadata.fileSize = file.size();
+    frame->metadata.modifiedAt = file.lastModified();
+    return requestMetadata(id, std::move(frame), std::move(callback));
+}
+
 LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Callback callback,
                                     int priority, bool viewportManaged, std::optional<FileSnapshot> snapshot) {
     Q_ASSERT(thread() == QThread::currentThread());
@@ -503,7 +514,12 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
                             estimatedPixelBytes(request.maximumSize,32));
                         if (request.prepareAllocation(estimate)) {
                             QImage image = *source;
-                            if (image.width() > request.maximumSize.width() || image.height() > request.maximumSize.height())
+                            if (!thumbnailSource->descriptor.presentationSize.isEmpty()) {
+                                const auto geometry = thumbnailSource->descriptor.presentationSize.boundedTo(
+                                    thumbnailSource->descriptor.presentationSize.scaled(request.maximumSize, Qt::KeepAspectRatio));
+                                if (geometry != image.size())
+                                    image = image.scaled(geometry.expandedTo({1, 1}), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                            } else if (image.width() > request.maximumSize.width() || image.height() > request.maximumSize.height())
                                 image = image.scaled(request.maximumSize,Qt::KeepAspectRatio,Qt::SmoothTransformation);
                             if (!request.isCancelled()) {
                                 auto frame = std::make_shared<ImageFrame>();

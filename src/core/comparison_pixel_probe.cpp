@@ -287,6 +287,9 @@ QString ComparisonPixelSample::sourceValueText() const {
 QString ComparisonPixelSample::displayValueText() const { return rgbText(displayColor); }
 
 QSize ComparisonPixelProbe::logicalFrameSize(const ImageFrame& frame) {
+    if (!frame.descriptor.presentationSize.isEmpty()) {
+        return frame.descriptor.presentationSize;
+    }
     if (frame.rawParameters) {
         const QSize oriented =
             orientedImageSize(frame.rawParameters->size, frame.rawParameters->orientation);
@@ -336,7 +339,10 @@ ComparisonPixelSample ComparisonPixelProbe::sampleAtLogicalPixel(const ImageFram
         return result;
     }
     if (samplingSize == logicalSize) {
-        return sampleAtDisplayPixel(frame, logicalPixel);
+        ComparisonPixelSample result = sampleAtDisplayPixel(frame, logicalPixel);
+        result.approximate = result.valid && !frame.descriptor.presentationSize.isEmpty() &&
+                             frame.descriptor.size != frame.metadata.sourceSize;
+        return result;
     }
     // A bounded preview keeps the full source size as its zoom/pan space while the probe
     // can only read the decoded proxy, so the hovered pixel maps proportionally instead of being
@@ -353,7 +359,8 @@ ComparisonPixelSample ComparisonPixelProbe::sampleAtLogicalPixel(const ImageFram
         // The caller reported a coordinate in its own zoom/pan space, so it stays the pixel of
         // record while sourcePixel keeps addressing the stored plane.
         result.displayPixel = logicalPixel;
-        result.approximate = true;
+        result.approximate = frame.descriptor.presentationSize.isEmpty() ||
+                             frame.descriptor.size != frame.metadata.sourceSize;
     }
     return result;
 }
@@ -372,6 +379,8 @@ ComparisonPixelSample ComparisonPixelProbe::sampleAtDisplayPixel(const ImageFram
     result.displayPixel = displayPixel;
     result.sourcePixel = displayPixel;
     result.sourceSamplesPending = frame.sourceSamplesPending;
+    const auto* planes = std::get_if<std::shared_ptr<const PlaneBufferSet>>(&frame.storage);
+    const bool renderedBitmap = planes && *planes && (*planes)->renderFromDisplayImage;
     if (rawAccessor.isValid()) {
         if (rawAccessor.isYuv()) {
             result.yuv = rawAccessor.yuvAtDisplayPixel(displayPixel);
@@ -387,12 +396,13 @@ ComparisonPixelSample ComparisonPixelProbe::sampleAtDisplayPixel(const ImageFram
             result.bayer = rawAccessor.bayerAtDisplayPixel(displayPixel);
             if (result.bayer) {
                 result.sourcePixel = result.bayer->sourcePixel;
-                result.displayColor =
-                    bayerDisplayColor(*frame.rawParameters, rawAccessor, *result.bayer);
-                if (frame.rawParameters->demosaic) {
-                    result.sourceRgbText = sourceRgbValueText(
-                        bayerLinearRgb(*frame.rawParameters, rawAccessor, *result.bayer),
-                        sourceSampleMaximum(*frame.rawParameters));
+                if (!renderedBitmap) {
+                    result.displayColor = bayerDisplayColor(*frame.rawParameters, rawAccessor, *result.bayer);
+                    if (frame.rawParameters->demosaic) {
+                        result.sourceRgbText = sourceRgbValueText(
+                            bayerLinearRgb(*frame.rawParameters, rawAccessor, *result.bayer),
+                            sourceSampleMaximum(*frame.rawParameters));
+                    }
                 }
             }
         }
