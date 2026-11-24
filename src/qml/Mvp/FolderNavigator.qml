@@ -212,7 +212,13 @@ Rectangle {
             anchors.fill: parent
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton
-            onClicked: root.controller.openDirectory(parent.entry.path)
+            onClicked: {
+                const entry = parent.entry
+                if (entry.kind === "recent")
+                    root.controller.openRecentDirectory(entry.path)
+                else
+                    root.controller.openDirectory(entry.path)
+            }
         }
     }
 

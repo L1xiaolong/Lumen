@@ -3,6 +3,9 @@
 #include "core/display_color_space.h"
 #include "io/encoded_color_management.h"
 #include "io/qt_image_decoder.h"
+#ifdef MVPVIEW_HAS_SPARKLE
+#include "qml/mac_update_driver.h"
+#endif
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -52,6 +55,9 @@ constexpr auto kCanvasBackgroundKey = "display/canvasBackground";
 constexpr auto kThumbnailPresentationKey = "display/thumbnailPresentation";
 constexpr auto kSmoothDisplayKey = "display/smoothDisplay";
 constexpr auto kLastUpdateCheckKey = "updates/lastCheckUtc";
+constexpr auto kIgnoredUpdateVersionKey = "updates/ignoredVersion";
+constexpr auto kPendingUpdateVersionKey = "updates/pendingVersion";
+constexpr auto kPendingReleaseUrlKey = "updates/pendingReleaseUrl";
 
 bool gSoftwareCacheDeletionRequested = false;
 QString settingsFileToDelete;
@@ -73,14 +79,24 @@ QStringList localAppDirectories() {
 }
 
 QString platformInstallerSuffix() {
-#if defined(Q_OS_MACOS)
-    return QStringLiteral("-macos-arm64.dmg");
-#elif defined(Q_OS_WIN)
+#if defined(Q_OS_WIN)
     return QStringLiteral("-windows-x64-setup.exe");
 #else
     return {};
 #endif
 }
+
+#ifdef Q_OS_WIN
+bool isInstalledWindowsCopy() {
+    const QSettings registration(
+        QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MVPImageViewer"),
+        QSettings::Registry32Format);
+    const QString folder = registration.value(QStringLiteral("InstallLocation")).toString();
+    return !folder.isEmpty() &&
+        QFileInfo(QDir(folder).filePath(QStringLiteral("Lumen.exe"))) ==
+            QFileInfo(QCoreApplication::applicationFilePath());
+}
+#endif
 
 struct ShortcutDefinition {
     const char* id;
@@ -168,6 +184,7 @@ AppSettings::AppSettings(QGuiApplication* application, QObject* parent)
     confirmTrash_ = settings.value(QLatin1String(kConfirmTrashKey), true).toBool();
     automaticUpdateChecks_ =
         settings.value(QLatin1String(kAutomaticUpdateChecksKey), true).toBool();
+    ignoredUpdateVersion_ = settings.value(QLatin1String(kIgnoredUpdateVersionKey)).toString();
     applyEmbeddedColorProfiles_ =
         settings.value(QLatin1String(kApplyEmbeddedColorProfilesKey), true).toBool();
     preserveHighBitDepth_ = settings.value(QLatin1String(kPreserveHighBitDepthKey), true).toBool();
@@ -224,6 +241,20 @@ AppSettings::AppSettings(QGuiApplication* application, QObject* parent)
     }
 
     applyLanguage();
+    const QString pendingVersion = settings.value(QLatin1String(kPendingUpdateVersionKey)).toString();
+    if (!pendingVersion.isEmpty()) {
+        if (QVersionNumber::compare(QVersionNumber::fromString(applicationVersion()),
+                                    QVersionNumber::fromString(pendingVersion)) >= 0) {
+            installedUpdateVersion_ = applicationVersion();
+        } else {
+            updateState_ = QStringLiteral("error");
+            latestVersion_ = pendingVersion;
+            releaseUrl_ = settings.value(QLatin1String(kPendingReleaseUrlKey)).toUrl();
+            updateError_ = QCoreApplication::translate("UpdateErrors", "The new version did not start. Try updating again.");
+        }
+        settings.remove(QLatin1String(kPendingUpdateVersionKey));
+        settings.remove(QLatin1String(kPendingReleaseUrlKey));
+    }
     if (application_ && application_->styleHints()) {
         connect(application_->styleHints(), &QStyleHints::colorSchemeChanged, this, [this] {
             if (theme_ == QStringLiteral("system"))
@@ -542,18 +573,40 @@ void AppSettings::startAutomaticUpdateCheck() {
     });
 }
 
-void AppSettings::checkForUpdates() {
-    if (updateState_ == QStringLiteral("checking") ||
-        updateState_ == QStringLiteral("downloading") ||
+bool AppSettings::automaticUpdateAvailable() const {
+    return updateState_ == QStringLiteral("available") && latestVersion_ != ignoredUpdateVersion_;
+}
+
+bool AppSettings::canInstallUpdate() const {
+#ifdef MVPVIEW_HAS_SPARKLE
+    return isAllowedUpdateUrl(macAppcastUrl_) && MacUpdateDriver::isConfigured();
+#elif defined(Q_OS_WIN)
+    return isAllowedUpdateUrl(installerUrl_) && !expectedInstallerSha256_.isEmpty() &&
+           isInstalledWindowsCopy();
+#else
+    return false;
+#endif
+}
+
+void AppSettings::checkForUpdates(bool showDetails) {
+    if (updateState_ == QStringLiteral("checking")) {
+        showUpdateDetails_ = showUpdateDetails_ || showDetails;
+        return;
+    }
+    if (updateState_ == QStringLiteral("downloading") ||
         updateState_ == QStringLiteral("verifying") ||
+        updateState_ == QStringLiteral("ready") ||
         updateState_ == QStringLiteral("installing"))
         return;
+    showUpdateDetails_ = showDetails;
     cancelUpdateRequested_ = false;
     installerUrl_.clear();
+    macAppcastUrl_.clear();
     installerAssetName_.clear();
     expectedInstallerSha256_.clear();
     installerAssetSize_ = 0;
     updateError_.clear();
+    releaseNotes_.clear();
     updateDownloadProgress_ = -1;
     clearDownloadedUpdate();
     setUpdateState(QStringLiteral("checking"));
@@ -600,22 +653,26 @@ void AppSettings::checkForUpdates() {
 void AppSettings::finishUpdateCheck(const QByteArray& releaseData) {
     QSettings().setValue(QLatin1String(kLastUpdateCheckKey), QDateTime::currentDateTimeUtc());
     const QJsonObject release = QJsonDocument::fromJson(releaseData).object();
+    const bool showDetails = std::exchange(showUpdateDetails_, false);
     QString version = release.value(QStringLiteral("tag_name")).toString();
     while (version.startsWith(QLatin1Char('v'), Qt::CaseInsensitive))
         version.remove(0, 1);
     const QUrl url(release.value(QStringLiteral("html_url")).toString());
-    if (version.isEmpty() || !url.isValid()) {
+    qsizetype versionLength = 0;
+    const auto releaseVersion = QVersionNumber::fromString(version, &versionLength);
+    if (releaseVersion.isNull() || versionLength != version.size() || !isAllowedUpdateUrl(url)) {
         setUpdateState(QStringLiteral("error"));
         return;
     }
     const bool available =
-        QVersionNumber::compare(QVersionNumber::fromString(version),
+        QVersionNumber::compare(releaseVersion,
                                 QVersionNumber::fromString(applicationVersion())) > 0;
     if (!available) {
         setUpdateState(QStringLiteral("latest"), version, url);
         return;
     }
 
+    releaseNotes_ = release.value(QStringLiteral("body")).toString().trimmed();
     const QString suffix = platformInstallerSuffix();
     const QRegularExpression sha256DigestPattern(
         QStringLiteral("^sha256:([0-9a-fA-F]{64})$"));
@@ -625,7 +682,15 @@ void AppSettings::finishUpdateCheck(const QByteArray& releaseData) {
         const QString name = asset.value(QStringLiteral("name")).toString();
         const QUrl downloadUrl(
             asset.value(QStringLiteral("browser_download_url")).toString());
-        if (!suffix.isEmpty() && name.endsWith(suffix, Qt::CaseInsensitive)) {
+#ifdef MVPVIEW_HAS_SPARKLE
+        if (name == QStringLiteral("lumen-appcast.xml") &&
+            downloadUrl == repositoryUrl(QStringLiteral("/releases/download/%1/lumen-appcast.xml")
+                                             .arg(release.value(QStringLiteral("tag_name")).toString()))) {
+            macAppcastUrl_ = downloadUrl;
+        }
+#endif
+        if (!suffix.isEmpty() && name.endsWith(suffix, Qt::CaseInsensitive) &&
+            QFileInfo(name).fileName() == name) {
             installerAssetName_ = name;
             installerUrl_ = downloadUrl;
             installerAssetSize_ = asset.value(QStringLiteral("size")).toInteger();
@@ -635,27 +700,48 @@ void AppSettings::finishUpdateCheck(const QByteArray& releaseData) {
                 digestMatch.hasMatch() ? digestMatch.captured(1).toLower() : QString{};
         }
     }
-    if (installerAssetName_.isEmpty() || !isAllowedUpdateUrl(installerUrl_) ||
-        expectedInstallerSha256_.isEmpty()) {
-        updateError_ = QCoreApplication::translate("UpdateErrors", "This release has no compatible installer that can be verified. Open the release page for available downloads.");
-        setUpdateState(QStringLiteral("error"), version, url);
-        return;
-    }
     setUpdateState(QStringLiteral("available"), version, url);
+    if (showDetails) emit updateDetailsRequested();
 }
 
-void AppSettings::downloadUpdate() {
-    if (updateState_ != QStringLiteral("available") || !isAllowedUpdateUrl(installerUrl_) ||
-        expectedInstallerSha256_.isEmpty())
-        return;
-    if (!networkManager_)
-        networkManager_ = new QNetworkAccessManager(this);
+void AppSettings::ignoreUpdate() {
+    if (updateState_ != QStringLiteral("available")) return;
+    ignoredUpdateVersion_ = latestVersion_;
+    QSettings().setValue(QLatin1String(kIgnoredUpdateVersionKey), ignoredUpdateVersion_);
+    emit updateStateChanged();
+}
 
+void AppSettings::startUpdate() {
+    if (updateState_ != QStringLiteral("available") || !canInstallUpdate()) return;
     cancelUpdateRequested_ = false;
     updateError_.clear();
-    updateDownloadProgress_ = 0;
+    updateDownloadProgress_ = -1;
     setUpdateState(QStringLiteral("downloading"), latestVersion_, releaseUrl_);
+#ifdef MVPVIEW_HAS_SPARKLE
+    if (!macUpdate_) {
+        macUpdate_ = std::make_unique<MacUpdateDriver>(
+            [this](int progress) {
+                updateDownloadProgress_ = progress;
+                emit updateStateChanged();
+            },
+            [this](const QString& state) { setUpdateState(state, latestVersion_, releaseUrl_); },
+            [this](const QString& error) {
+                if (std::exchange(cancelUpdateRequested_, false)) {
+                    updateDownloadProgress_ = -1;
+                    setUpdateState(QStringLiteral("available"), latestVersion_, releaseUrl_);
+                } else {
+                    QSettings settings;
+                    settings.remove(QLatin1String(kPendingUpdateVersionKey));
+                    settings.remove(QLatin1String(kPendingReleaseUrlKey));
+                    failUpdate(error);
+                }
+            });
+    }
+    macUpdate_->start(macAppcastUrl_, latestVersion_);
+#elif defined(Q_OS_WIN)
+    if (!networkManager_) networkManager_ = new QNetworkAccessManager(this);
     beginInstallerDownload();
+#endif
 }
 
 void AppSettings::beginInstallerDownload() {
@@ -742,30 +828,41 @@ void AppSettings::beginInstallerDownload() {
 }
 
 void AppSettings::cancelUpdateDownload() {
-    if (updateState_ != QStringLiteral("downloading") &&
-        updateState_ != QStringLiteral("verifying"))
-        return;
+    if (updateState_ != QStringLiteral("downloading")) return;
     cancelUpdateRequested_ = true;
+#ifdef MVPVIEW_HAS_SPARKLE
+    if (macUpdate_) macUpdate_->cancel();
+#else
     if (activeUpdateReply_)
         activeUpdateReply_->abort();
+#endif
 }
 
-void AppSettings::installUpdate() {
-    if (updateState_ != QStringLiteral("ready") || downloadedUpdatePath_.isEmpty() ||
-        !QFileInfo::exists(downloadedUpdatePath_))
-        return;
-    bool started = false;
-#if defined(Q_OS_MACOS)
-    started = QProcess::startDetached(QStringLiteral("/usr/bin/open"), {downloadedUpdatePath_});
+void AppSettings::installPreparedUpdate() {
+    if (updateState_ != QStringLiteral("ready")) return;
+#ifdef MVPVIEW_HAS_SPARKLE
+    rememberPendingUpdate();
+    setUpdateState(QStringLiteral("installing"), latestVersion_, releaseUrl_);
+    macUpdate_->install();
 #elif defined(Q_OS_WIN)
-    started = QProcess::startDetached(downloadedUpdatePath_, QStringList{});
-#endif
-    if (!started) {
-        failUpdate(QCoreApplication::translate("UpdateErrors", "Could not open the installer. Download it from the release page and open it manually."));
+    if (!isInstalledWindowsCopy() || !QFileInfo(downloadedUpdatePath_).isFile() ||
+        !QProcess::startDetached(downloadedUpdatePath_,
+                                 {QStringLiteral("/S"),
+                                  QStringLiteral("/UPDATEPID=%1").arg(QCoreApplication::applicationPid())})) {
+        failUpdate(QCoreApplication::translate("UpdateErrors", "Could not start the update installer. Try again or open the release page."));
         return;
     }
+    rememberPendingUpdate();
     setUpdateState(QStringLiteral("installing"), latestVersion_, releaseUrl_);
-    QTimer::singleShot(250, QCoreApplication::instance(), &QCoreApplication::quit);
+    emit quitForUpdateRequested();
+#endif
+}
+
+void AppSettings::rememberPendingUpdate() {
+    QSettings settings;
+    settings.setValue(QLatin1String(kPendingUpdateVersionKey), latestVersion_);
+    settings.setValue(QLatin1String(kPendingReleaseUrlKey), releaseUrl_);
+    settings.sync();
 }
 
 void AppSettings::failUpdate(const QString& error) {
@@ -843,6 +940,11 @@ void AppSettings::restoreDefaults() {
     setRestoreLastDirectory(true);
     setConfirmTrash(true);
     setAutomaticUpdateChecks(true);
+    if (!ignoredUpdateVersion_.isEmpty()) {
+        ignoredUpdateVersion_.clear();
+        QSettings().remove(QLatin1String(kIgnoredUpdateVersionKey));
+        emit updateStateChanged();
+    }
     setApplyEmbeddedColorProfiles(true);
     setPreserveHighBitDepth(true);
     setDisplayColorSpace(QStringLiteral("auto"));

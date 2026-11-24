@@ -72,6 +72,7 @@ class BrowseWorkspaceController final : public QObject {
     void statusTextChanged();
     void compareRequested(const QStringList& paths);
     void directoryOpenFailed(const QString& path, const QString& message);
+    void recentDirectoryMissing(const QString& path);
     void transferConfirmationRequested(bool move, int itemCount,
                                        const QString& targetDirectory);
 

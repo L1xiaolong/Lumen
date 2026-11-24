@@ -163,6 +163,14 @@
 <context>
     <name>BrowsePage</name>
     <message>
+        <source>Folder no longer exists</source>
+        <translation>文件夹已不存在</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>确定</translation>
+    </message>
+    <message>
         <source>Actual pixels (1:1)</source>
         <translation>100%（1:1）</translation>
     </message>
@@ -1564,6 +1572,22 @@ Choose another folder or drop images here</source>
 <context>
     <name>SettingsCard</name>
     <message>
+        <source>Waiting for file operations to finish…</source>
+        <translation>正在等待文件操作完成…</translation>
+    </message>
+    <message>
+        <source>Installing and restarting Lumen…</source>
+        <translation>正在安装更新并重启 Lumen…</translation>
+    </message>
+    <message>
+        <source>Check when Lumen starts. Updating requires your confirmation.</source>
+        <translation>Lumen 启动时检查更新。你确认后才会更新。</translation>
+    </message>
+    <message>
+        <source>View update</source>
+        <translation>查看更新</translation>
+    </message>
+    <message>
         <location filename="../Mvp/SettingsCard.qml" line="49"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
@@ -2206,10 +2230,6 @@ Choose another folder or drop images here</source>
         <location filename="../Mvp/SettingsCard.qml" line="510"/>
         <source>Download update</source>
         <translation>下载更新</translation>
-    </message>
-    <message>
-        <source>View update</source>
-        <translation type="vanished">查看更新</translation>
     </message>
     <message>
         <source>Keeps 16-bit and floating-point samples through ICC conversion and GPU display. Disable to use an 8-bit sRGB display buffer.</source>
@@ -4149,6 +4169,10 @@ Returned to the previous folder.</source>
 </context>
 <context>
     <name>ApplicationNotices</name>
+    <message>
+        <source>Updated to Lumen %1.</source>
+        <translation>已更新到 Lumen %1。</translation>
+    </message>
     <message><source>Diagnostic report available</source><translation>诊断报告可用</translation></message>
     <message><source>A crash report from the previous session is available.</source><translation>上次运行的崩溃报告可供导出。</translation></message>
     <message><source>The previous session ended unexpectedly. Diagnostic information may be available.</source><translation>上次运行意外结束，可查看和导出诊断信息。</translation></message>
@@ -4498,7 +4522,118 @@ Returned to the previous folder.</source>
     </message>
 </context>
 <context>
+    <name>UpdateDialog</name>
+    <message>
+        <source>Update failed</source>
+        <translation>更新失败</translation>
+    </message>
+    <message>
+        <source>Lumen %1 is available</source>
+        <translation>Lumen %1 已发布</translation>
+    </message>
+    <message>
+        <source>Updating Lumen</source>
+        <translation>更新 Lumen</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>关闭</translation>
+    </message>
+    <message>
+        <source>Current version %1</source>
+        <translation>当前版本 %1</translation>
+    </message>
+    <message>
+        <source>This release has no update notes.</source>
+        <translation>此版本暂无更新说明。</translation>
+    </message>
+    <message>
+        <source>Checking for updates…</source>
+        <translation>正在检查更新…</translation>
+    </message>
+    <message>
+        <source>Downloading… %1%</source>
+        <translation>正在下载… %1%</translation>
+    </message>
+    <message>
+        <source>Downloading…</source>
+        <translation>正在下载…</translation>
+    </message>
+    <message>
+        <source>Verifying the update…</source>
+        <translation>正在校验更新…</translation>
+    </message>
+    <message>
+        <source>Waiting for file operations to finish…</source>
+        <translation>正在等待文件操作完成…</translation>
+    </message>
+    <message>
+        <source>Installing and restarting Lumen…</source>
+        <translation>正在安装更新并重启 Lumen…</translation>
+    </message>
+    <message>
+        <source>Couldn’t check for updates. Check your connection and try again.</source>
+        <translation>无法检查更新。请检查网络连接后重试。</translation>
+    </message>
+    <message>
+        <source>Lumen is up to date.</source>
+        <translation>Lumen 已是最新版本。</translation>
+    </message>
+    <message>
+        <source>Lumen will restart when the update is ready.</source>
+        <translation>更新就绪后，Lumen 将自动重启。</translation>
+    </message>
+    <message>
+        <source>Open the release page to download this update.</source>
+        <translation>请打开发布页下载此更新。</translation>
+    </message>
+    <message>
+        <source>Update progress</source>
+        <translation>更新进度</translation>
+    </message>
+    <message>
+        <source>Update and restart</source>
+        <translation>更新并重启</translation>
+    </message>
+    <message>
+        <source>Try again</source>
+        <translation>重试</translation>
+    </message>
+    <message>
+        <source>Open release page</source>
+        <translation>打开发布页</translation>
+    </message>
+    <message>
+        <source>Skip this version</source>
+        <translation>忽略此版本</translation>
+    </message>
+    <message>
+        <source>Cancel download</source>
+        <translation>取消下载</translation>
+    </message>
+</context>
+<context>
     <name>UpdateErrors</name>
+    <message>
+        <source>The new version did not start. Try updating again.</source>
+        <translation>新版本未能启动，请重试更新。</translation>
+    </message>
+    <message>
+        <source>Could not start the update installer. Try again or open the release page.</source>
+        <translation>无法启动更新安装程序。请重试，或打开发布页手动更新。</translation>
+    </message>
+    <message>
+        <source>The update feed does not match this release. Check for updates again.</source>
+        <translation>更新源与此版本不匹配，请重新检查更新。</translation>
+    </message>
+    <message>
+        <source>The update did not finish. Try again.</source>
+        <translation>更新未完成，请重试。</translation>
+    </message>
+    <message>
+        <source>An update is already in progress.</source>
+        <translation>正在更新，请稍候。</translation>
+    </message>
     <message>
         <source>This release has no compatible installer that can be verified. Open the release page for available downloads.</source>
         <translation>此版本没有适用于当前系统且可验证的安装包，请查看发布页中的下载文件。</translation>

@@ -66,6 +66,7 @@ Rectangle {
                                                        !trashDialog.visible &&
                                                        !transferDialog.visible &&
                                                        !directoryErrorDialog.visible &&
+                                                       !missingRecentDirectoryDialog.visible &&
                                                        !folderPicker.visible
     readonly property bool fileShortcutsEnabled: (workspaceController.hasActivePane === undefined ||
                                                   workspaceController.hasActivePane) &&
@@ -1635,6 +1636,21 @@ Rectangle {
     }
 
     AppConfirmDialog {
+        id: missingRecentDirectoryDialog
+        objectName: "missingRecentDirectoryDialog"
+        parent: root
+        property string path: ""
+        dialogTitle: qsTr("Folder no longer exists")
+        message: path
+        confirmText: qsTr("OK")
+        showCancelButton: false
+        onConfirmed: {
+            root.controller.removeRecentDirectory(path)
+            close()
+        }
+    }
+
+    AppConfirmDialog {
         id: trashDialog
         objectName: "trashConfirmationDialog"
         parent: root
@@ -1775,6 +1791,11 @@ Rectangle {
         function onDirectoryOpenFailed(path, message) {
             directoryErrorDialog.showConfirmation()
             directoryErrorDialog.complete(message)
+        }
+
+        function onRecentDirectoryMissing(path) {
+            missingRecentDirectoryDialog.path = path
+            missingRecentDirectoryDialog.showConfirmation()
         }
 
         function onTransferConfirmationRequested(move, itemCount, targetDirectory) {

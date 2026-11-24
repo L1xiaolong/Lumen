@@ -7,19 +7,29 @@ Column {
     property var settingsController: null
     property var diagnostics: null
     property bool diagnosticDismissed: false
-    property bool updateDismissed: false
+    property string dismissedVersion: ""
+    property bool updatesVisible: true
+    property bool updatedNoticeDismissed: false
     readonly property bool hasDiagnostic: !diagnosticDismissed && diagnostics
                                           && diagnostics.previousExit.length > 0
-    readonly property bool hasUpdate: !updateDismissed && settingsController
-                                      && settingsController.updateState === "available"
+    readonly property bool hasUpdate: updatesVisible && settingsController &&
+                                      settingsController.automaticUpdateAvailable &&
+                                      settingsController.latestVersion !== dismissedVersion
     signal diagnosticsRequested()
     signal updatesRequested()
     spacing: 8
 
-    Connections {
-        target: root.settingsController
-        function onUpdateStateChanged() {
-            if (root.settingsController.updateState === "available") root.updateDismissed = false
+    SettingsNotice {
+        id: updatedNotice
+        objectName: "updateInstalledNotice"
+        severity: "success"
+        text: visible ? qsTr("Updated to Lumen %1.").arg(root.settingsController.installedUpdateVersion) : ""
+        visible: root.updatesVisible && !root.updatedNoticeDismissed &&
+                 root.settingsController && root.settingsController.installedUpdateVersion.length > 0
+        Timer {
+            running: updatedNotice.visible
+            interval: 6000
+            onTriggered: root.updatedNoticeDismissed = true
         }
     }
 
@@ -112,7 +122,7 @@ Column {
             SettingsButton {
                 objectName: "noticeUpdateButton"
                 text: qsTr("View update")
-                onClicked: { root.updateDismissed = true; root.updatesRequested() }
+                onClicked: root.updatesRequested()
             }
         }
         AppIconButton {
@@ -124,7 +134,7 @@ Column {
             renderedIconSize: 14
             iconSource: Theme.iconPrefix + "close.svg"
             toolTipText: qsTr("Dismiss")
-            onClicked: root.updateDismissed = true
+            onClicked: root.dismissedVersion = root.settingsController.latestVersion
         }
     }
 }

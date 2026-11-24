@@ -21,6 +21,10 @@ class QSaveFile;
 
 namespace mvpview {
 
+#ifdef MVPVIEW_HAS_SPARKLE
+class MacUpdateDriver;
+#endif
+
 class AppSettings final : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool loggingEnabled READ loggingEnabled WRITE setLoggingEnabled NOTIFY diagnosticsChanged)
@@ -55,6 +59,10 @@ class AppSettings final : public QObject {
     Q_PROPERTY(QString updateState READ updateState NOTIFY updateStateChanged)
     Q_PROPERTY(QString latestVersion READ latestVersion NOTIFY updateStateChanged)
     Q_PROPERTY(QUrl releaseUrl READ releaseUrl NOTIFY updateStateChanged)
+    Q_PROPERTY(QString releaseNotes READ releaseNotes NOTIFY updateStateChanged)
+    Q_PROPERTY(bool automaticUpdateAvailable READ automaticUpdateAvailable NOTIFY updateStateChanged)
+    Q_PROPERTY(bool canInstallUpdate READ canInstallUpdate NOTIFY updateStateChanged)
+    Q_PROPERTY(QString installedUpdateVersion READ installedUpdateVersion CONSTANT)
     Q_PROPERTY(int updateDownloadProgress READ updateDownloadProgress NOTIFY updateStateChanged)
     Q_PROPERTY(QString updateError READ updateError NOTIFY updateStateChanged)
     Q_PROPERTY(QString downloadedUpdatePath READ downloadedUpdatePath NOTIFY updateStateChanged)
@@ -87,6 +95,10 @@ class AppSettings final : public QObject {
     [[nodiscard]] QString updateState() const;
     [[nodiscard]] QString latestVersion() const;
     [[nodiscard]] QUrl releaseUrl() const;
+    [[nodiscard]] QString releaseNotes() const { return releaseNotes_; }
+    [[nodiscard]] bool automaticUpdateAvailable() const;
+    [[nodiscard]] bool canInstallUpdate() const;
+    [[nodiscard]] QString installedUpdateVersion() const { return installedUpdateVersion_; }
     [[nodiscard]] int updateDownloadProgress() const;
     [[nodiscard]] QString updateError() const;
     [[nodiscard]] QString downloadedUpdatePath() const;
@@ -125,10 +137,11 @@ class AppSettings final : public QObject {
     Q_INVOKABLE QString setShortcut(const QString& action, const QString& sequence);
     Q_INVOKABLE void resetShortcuts();
     Q_INVOKABLE void startAutomaticUpdateCheck();
-    Q_INVOKABLE void checkForUpdates();
-    Q_INVOKABLE void downloadUpdate();
+    Q_INVOKABLE void checkForUpdates(bool showDetails = false);
+    Q_INVOKABLE void startUpdate();
+    Q_INVOKABLE void ignoreUpdate();
     Q_INVOKABLE void cancelUpdateDownload();
-    Q_INVOKABLE void installUpdate();
+    void installPreparedUpdate();
     Q_INVOKABLE void openReleasePage() const;
     Q_INVOKABLE void openRepository() const;
     Q_INVOKABLE void restoreDefaults();
@@ -146,6 +159,8 @@ class AppSettings final : public QObject {
     void confirmTrashChanged();
     void automaticUpdateChecksChanged();
     void updateStateChanged();
+    void updateDetailsRequested();
+    void quitForUpdateRequested();
     void shortcutsChanged();
     void colorDisplayChanged();
     void thumbnailPresentationChanged();
@@ -159,6 +174,7 @@ class AppSettings final : public QObject {
     void beginInstallerDownload();
     void failUpdate(const QString& error);
     void clearDownloadedUpdate();
+    void rememberPendingUpdate();
     [[nodiscard]] bool isAllowedUpdateUrl(const QUrl& url) const;
     [[nodiscard]] static QString normalizedShortcut(const QString& sequence);
     [[nodiscard]] static QString normalizedLanguage(const QString& language);
@@ -193,7 +209,12 @@ class AppSettings final : public QObject {
     QString updateState_ = QStringLiteral("idle");
     QString latestVersion_;
     QUrl releaseUrl_;
+    QString releaseNotes_;
+    QString ignoredUpdateVersion_;
+    QString installedUpdateVersion_;
+    bool showUpdateDetails_ = false;
     QUrl installerUrl_;
+    QUrl macAppcastUrl_;
     QString installerAssetName_;
     QString expectedInstallerSha256_;
     QString downloadedUpdatePath_;
@@ -210,6 +231,9 @@ class AppSettings final : public QObject {
     QPointer<QNetworkReply> activeUpdateReply_;
     std::unique_ptr<QSaveFile> updateFile_;
     std::unique_ptr<QCryptographicHash> updateHash_;
+#ifdef MVPVIEW_HAS_SPARKLE
+    std::unique_ptr<MacUpdateDriver> macUpdate_;
+#endif
 };
 
 } // namespace mvpview

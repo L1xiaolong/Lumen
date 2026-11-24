@@ -124,12 +124,15 @@ class BrowseController final : public QObject {
     [[nodiscard]] bool canRestoreSelected() const;
     [[nodiscard]] QSize selectedImageSize() const;
     [[nodiscard]] ImageLoader* loader() const { return loader_; }
+    [[nodiscard]] static bool hasPendingFileOperations();
     [[nodiscard]] QStringList selectedImagePaths() const;
     void setWorkspaceSelectionOrder(const QStringList& paths);
     void setSharedRecentFolders(const QStringList& paths);
     void setSharedRecentLocations(const QStringList& paths);
 
     Q_INVOKABLE void openDirectory(const QString& path);
+    Q_INVOKABLE void openRecentDirectory(const QString& path);
+    Q_INVOKABLE void removeRecentDirectory(const QString& path);
     Q_INVOKABLE void openDirectoryUrl(const QUrl& url);
     Q_INVOKABLE void loadFolderTreeChildren(const QString& path);
     Q_INVOKABLE bool isNetworkPath(const QString& path) const;
@@ -210,11 +213,13 @@ class BrowseController final : public QObject {
     void transformBusyChanged();
     void transformFinished(const QString& path, const QString& error);
     void directoryOpenFailed(const QString& path, const QString& message);
+    void recentDirectoryMissing(const QString& path);
 
   private:
     void openDirectoryInternal(const QString& path, bool addToHistory,
                                bool pathAlreadyValidated = false,
-                               std::optional<QVector<ImageFileRecord>> preparedFiles = std::nullopt);
+                               std::optional<QVector<ImageFileRecord>> preparedFiles = std::nullopt,
+                               bool fromRecents = false);
     void failNetworkDirectory(bool timedOut);
     void rescanCurrentDirectory();
     void setStatusText(const QString& text);

@@ -278,8 +278,8 @@ Rectangle {
                                 }
                                 onClicked: {
                                     root.activate()
-                                    root.controller.openDirectory(modelData)
                                     locationPopup.close()
+                                    root.controller.openRecentDirectory(modelData)
                                 }
                             }
                         }

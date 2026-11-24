@@ -30,6 +30,8 @@ Options:
 
 Environment:
   MVPVIEW_GITHUB_REPOSITORY  GitHub owner/repository embedded in update links.
+  MVPVIEW_SPARKLE_FRAMEWORK  Sparkle.framework in the official Sparkle distribution.
+  MVPVIEW_SPARKLE_PUBLIC_KEY EdDSA public key for signed in-app updates.
 
 Outputs:
   dev/debug  build/macos-preset-debug/src/qml/Lumen.app
@@ -45,6 +47,8 @@ clean=0
 create_zip=1
 enable_crashpad="OFF"
 sign_identity="${MVPVIEW_CODESIGN_IDENTITY:--}"
+sparkle_framework="${MVPVIEW_SPARKLE_FRAMEWORK:-}"
+sparkle_public_key="${MVPVIEW_SPARKLE_PUBLIC_KEY:-}"
 qt_prefix="${MVPVIEW_QT_PREFIX:-}"
 jobs="$(sysctl -n hw.ncpu 2>/dev/null || echo 6)"
 
@@ -157,6 +161,17 @@ else
 fi
 built_app="$build_dir/src/qml/Lumen.app"
 
+if [[ "$command_name" == "package" && -n "$sparkle_framework" ]]; then
+    if [[ ! "$sparkle_public_key" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+        echo "MVPVIEW_SPARKLE_PUBLIC_KEY must be the base64-encoded Sparkle EdDSA public key." >&2
+        exit 1
+    fi
+    if [[ ! -f "$(dirname "$sparkle_framework")/LICENSE" ]]; then
+        echo "The official Sparkle LICENSE must be next to Sparkle.framework." >&2
+        exit 1
+    fi
+fi
+
 if [[ "$clean" -eq 1 ]]; then
     echo "Removing build directory: $build_dir"
     rm -rf "$build_dir"
@@ -172,6 +187,7 @@ if [[ -n "$qt_prefix" ]]; then
         -DCMAKE_BUILD_TYPE="$build_type" \
         -DCMAKE_OSX_ARCHITECTURES=arm64 \
         -DMVPVIEW_ENABLE_CRASHPAD="$enable_crashpad" \
+        -DMVPVIEW_SPARKLE_FRAMEWORK="$sparkle_framework" \
         -DMVPVIEW_GITHUB_REPOSITORY="${MVPVIEW_GITHUB_REPOSITORY:-}" \
         -DCMAKE_PREFIX_PATH="$qt_prefix;$brew_prefix" \
         -DQt6_DIR="$qt_prefix/lib/cmake/Qt6"
@@ -182,6 +198,7 @@ else
     cmake --preset "$preset" \
         -DCMAKE_PREFIX_PATH="$default_prefix_path" \
         -DMVPVIEW_ENABLE_CRASHPAD="$enable_crashpad" \
+        -DMVPVIEW_SPARKLE_FRAMEWORK="$sparkle_framework" \
         -DMVPVIEW_GITHUB_REPOSITORY="${MVPVIEW_GITHUB_REPOSITORY:-}"
     echo "Building preset: $preset (-j $jobs)"
     cmake --build --preset "$preset" -j "$jobs"
@@ -198,7 +215,23 @@ if [[ "$command_name" != "package" ]]; then
     exit 0
 fi
 
-for tool_name in macdeployqt qtpaths otool install_name_tool codesign ditto file lipo \
+qt_tools="$build_dir/macos-qt-tools-Release.txt"
+if [[ ! -s "$qt_tools" ]]; then
+    echo "The Qt SDK selected by CMake must provide qtpaths and macdeployqt for packaging." >&2
+    exit 1
+fi
+{
+    IFS= read -r qtpaths_tool
+    IFS= read -r macdeployqt_tool
+} < "$qt_tools"
+for qt_tool in "$qtpaths_tool" "$macdeployqt_tool"; do
+    if [[ ! -x "$qt_tool" ]]; then
+        echo "Required tool is missing from the selected Qt SDK: $qt_tool" >&2
+        exit 1
+    fi
+done
+
+for tool_name in otool install_name_tool codesign ditto file lipo \
                       hdiutil unzip; do
     command -v "$tool_name" >/dev/null 2>&1 || {
         echo "Required packaging tool is missing: $tool_name" >&2
@@ -211,6 +244,10 @@ trap 'rm -rf "$stage_dir"' EXIT
 staged_app="$stage_dir/Lumen.app"
 ditto "$built_app" "$staged_app"
 strip -S "$staged_app/Contents/MacOS/Lumen"
+if [[ -z "$sparkle_framework" && -d "$staged_app/Contents/Frameworks/Sparkle.framework" ]]; then
+    # An incremental development build may still contain a previously embedded framework.
+    rm -rf "$staged_app/Contents/Frameworks/Sparkle.framework"
+fi
 
 crashpad_enabled="$(sed -n 's/^MVPVIEW_ENABLE_CRASHPAD:BOOL=//p' "$build_dir/CMakeCache.txt")"
 if [[ "$crashpad_enabled" == "ON" && ! -x "$staged_app/Contents/Helpers/crashpad_handler" ]]; then
@@ -226,7 +263,7 @@ cmake "-DNOTICE_DESTINATION=$staged_app/Contents/Resources" \
 
 echo "Deploying Qt and QML dependencies"
 deploy_log="$stage_dir/macdeployqt.log"
-if ! macdeployqt "$staged_app" \
+if ! "$macdeployqt_tool" "$staged_app" \
     -qmldir="$script_dir/src/qml" \
     -always-overwrite \
     -verbose=0 >"$deploy_log" 2>&1; then
@@ -237,7 +274,7 @@ fi
 
 # Homebrew Qt 6.9's macdeployqt can omit frameworks referenced only by QML
 # plug-ins. Copy the small, actually used Controls/Dialogs dependency closure.
-qt_lib_dir="$(qtpaths --query QT_INSTALL_LIBS)"
+qt_lib_dir="$("$qtpaths_tool" --query QT_INSTALL_LIBS)"
 required_frameworks=(
     QtDBus.framework
     QtQmlCore.framework
@@ -447,6 +484,16 @@ fi
 
 chmod -R u+w "$staged_app"
 xattr -cr "$staged_app" 2>/dev/null || true
+
+if [[ -n "$sparkle_framework" ]]; then
+    app_plist="$staged_app/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $sparkle_public_key" "$app_plist"
+    /usr/libexec/PlistBuddy -c "Add :SUEnableAutomaticChecks bool false" "$app_plist"
+    /usr/libexec/PlistBuddy -c "Add :SUAllowsAutomaticUpdates bool false" "$app_plist"
+    /usr/libexec/PlistBuddy -c "Add :SUVerifyUpdateBeforeExtraction bool true" "$app_plist"
+    /usr/libexec/PlistBuddy -c "Add :SURequireSignedFeed bool true" "$app_plist"
+    cp "$(dirname "$sparkle_framework")/LICENSE" "$staged_app/Contents/Resources/licenses/sparkle-LICENSE"
+fi
 
 if [[ "$crashpad_enabled" == "ON" ]]; then
     if [[ "$sign_identity" != "-" ]]; then

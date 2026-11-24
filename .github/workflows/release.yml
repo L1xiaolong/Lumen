@@ -147,7 +147,22 @@ jobs:
           ASSET_SUFFIX: ${{ matrix.asset_suffix }}
           MVPVIEW_GITHUB_REPOSITORY: ${{ github.repository }}
           MVPVIEW_RUNTIME_CATALOG: ${{ vars.MVPVIEW_RUNTIME_CATALOG_MACOS }}
+          MVPVIEW_SPARKLE_PUBLIC_KEY: ${{ vars.MVPVIEW_SPARKLE_PUBLIC_KEY }}
         run: |
+          if [[ -n "$MVPVIEW_SPARKLE_PUBLIC_KEY" ]]; then
+            sparkle_dir="$RUNNER_TEMP/lumen-sparkle"
+            mkdir -p "$sparkle_dir"
+            curl --fail --silent --show-error --location --retry 3 \
+              https://github.com/sparkle-project/Sparkle/releases/download/2.10.1/Sparkle-2.10.1.tar.xz \
+              --output "$sparkle_dir/sparkle.tar.xz"
+            printf '%s  %s\n' \
+              1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27 \
+              "$sparkle_dir/sparkle.tar.xz" | shasum -a 256 -c -
+            tar -xf "$sparkle_dir/sparkle.tar.xz" -C "$sparkle_dir"
+            export MVPVIEW_SPARKLE_FRAMEWORK="$sparkle_dir/Sparkle.framework"
+          else
+            echo "::notice::Configure MVPVIEW_SPARKLE_PUBLIC_KEY to enable macOS in-app updates."
+          fi
           ./build_macos.sh package --no-zip
           project_version="$(sed -nE \
             's/^project\(Lumen VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES CXX\)$/\1/p' \
@@ -157,6 +172,17 @@ jobs:
           test -s "$source_image"
           mv "$source_image" "$installer"
           hdiutil verify "$installer"
+
+      - name: Sign the macOS update and its appcast
+        if: runner.os == 'macOS' && vars.MVPVIEW_SPARKLE_PUBLIC_KEY != ''
+        env:
+          MVPVIEW_SPARKLE_PUBLIC_KEY: ${{ vars.MVPVIEW_SPARKLE_PUBLIC_KEY }}
+          MVPVIEW_SPARKLE_PRIVATE_KEY: ${{ secrets.MVPVIEW_SPARKLE_PRIVATE_KEY }}
+        run: |
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' dist/Lumen.app/Contents/Info.plist)"
+          python3 scripts/create_sparkle_appcast.py "$RUNNER_TEMP/lumen-sparkle/bin/sign_update" \
+            "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$version" \
+            "dist/Lumen-$RELEASE_TAG-macos-arm64.dmg" dist/lumen-appcast.xml
 
       - name: Configure and build (Windows)
         if: runner.os == 'Windows'
@@ -269,6 +295,7 @@ jobs:
           path: |
             dist/*.dmg
             dist/*-setup.exe
+            dist/lumen-appcast.xml
           if-no-files-found: error
 
   publish:
@@ -298,14 +325,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          assets=(release-assets/*.dmg release-assets/*-setup.exe)
+          if [[ -f release-assets/lumen-appcast.xml ]]; then
+            assets+=(release-assets/lumen-appcast.xml)
+          fi
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release-assets/*.dmg \
-              release-assets/*-setup.exe \
+            gh release upload "$RELEASE_TAG" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
           else
-            gh release create "$RELEASE_TAG" release-assets/*.dmg \
-              release-assets/*-setup.exe \
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Lumen $RELEASE_TAG" \

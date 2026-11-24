@@ -45,6 +45,7 @@ ApplicationWindow {
     property var comparePage: compareLoader.item
     property var fullScreenPage: fullScreenLoader.item
     property var settingsCard: settingsLoader.item
+    readonly property bool modalVisible: updateDialog.visible || (settingsCard && settingsCard.visible)
     property var pendingComparePaths: []
     property int pendingSettingsSection: 0
     property var settingsReturnFocus: null
@@ -231,6 +232,8 @@ ApplicationWindow {
 
     Component.onCompleted: {
         appSettings.startAutomaticUpdateCheck()
+        if (appSettings.updateState === "error" && appSettings.latestVersion.length > 0)
+            Qt.callLater(updateDialog.open)
         if (initialFullScreenPaths.length > 0)
             Qt.callLater(function() { window.openFullScreen(initialFullScreenPaths, 0) })
         else if (initialComparePaths.length >= 2)
@@ -258,7 +261,7 @@ ApplicationWindow {
         rawController: rawParametersController
         settingsController: appSettings
         visible: !window.showingCompare && (!window.showingFullScreen || window.fullScreenUsesWindow)
-        externalModalVisible: settingsCard ? settingsCard.visible : false
+        externalModalVisible: window.modalVisible
         onFullScreenRequested: function(paths, initialIndex) {
             window.openFullScreen(paths, initialIndex)
         }
@@ -291,7 +294,7 @@ ApplicationWindow {
         titleBarHeight: window.unifiedTitleBarHeight || Theme.toolbarHeight
         captionButtonsWidth: windowChrome.captionButtonsWidth
         controller: compareController
-        externalModalVisible: window.settingsCard ? window.settingsCard.visible : false
+        externalModalVisible: window.modalVisible
         settingsController: appSettings
         onCloseRequested: window.closeCompare()
     }
@@ -309,7 +312,7 @@ ApplicationWindow {
         sourceComponent: Component {
             FullScreenPage {
                 controller: fullScreenController
-                externalModalVisible: window.settingsCard ? window.settingsCard.visible : false
+                externalModalVisible: window.modalVisible
                 propertiesController: fullScreenPropertiesController
                 settingsController: appSettings
                 messageParent: window.presentationWindow.contentItem
@@ -337,10 +340,21 @@ ApplicationWindow {
         width: Math.min(380, parent.width - 32)
         z: 100
         visible: !window.fullScreenTransitioning
+        updatesVisible: !window.showingFullScreen && !window.modalVisible
         settingsController: appSettings
         diagnostics: typeof diagnosticsController !== "undefined" ? diagnosticsController : null
         onDiagnosticsRequested: window.openSettings(4)
-        onUpdatesRequested: window.openSettings(3)
+        onUpdatesRequested: updateDialog.open()
+    }
+
+    UpdateDialog {
+        id: updateDialog
+        parent: window.presentationOverlay
+        controller: appSettings
+    }
+    Connections {
+        target: appSettings
+        function onUpdateDetailsRequested() { updateDialog.open() }
     }
 
     Loader {
@@ -352,6 +366,7 @@ ApplicationWindow {
             SettingsCard {
                 parent: window.presentationOverlay
                 settingsController: appSettings
+                onUpdateDetailsRequested: updateDialog.open()
                 onClosed: {
                     if (window.settingsReturnFocus)
                         window.settingsReturnFocus.forceActiveFocus()
@@ -365,7 +380,7 @@ ApplicationWindow {
     Shortcut {
         context: Qt.ApplicationShortcut
         enabled: window.presentationWindow.active &&
-                  (!window.settingsCard || !window.settingsCard.visible) && !shortcutContext.textInputFocused
+                  !window.modalVisible && !shortcutContext.textInputFocused
         sequence: {
             const revision = appSettings.shortcutsRevision
             return appSettings.shortcutFor("settings")

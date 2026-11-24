@@ -7,6 +7,7 @@ Dialog {
     property string dialogTitle: qsTr("")
     property string message: qsTr("")
     property string confirmText: qsTr("Confirm")
+    property bool showCancelButton: true
     property bool destructive: false
     property bool completedWithError: false
     signal confirmed()
@@ -53,6 +54,7 @@ Dialog {
         Text {
             width: parent.width
             text: root.completedWithError ? errorLabel.text : root.message
+            textFormat: Text.PlainText
             color: root.completedWithError ? Theme.danger : Theme.mutedInk
             wrapMode: Text.Wrap
             font.family: Theme.uiFont
@@ -66,11 +68,16 @@ Dialog {
             spacing: 8
             SettingsButton {
                 text: root.completedWithError ? qsTr("Close") : root.confirmText
+                focus: !root.showCancelButton
                 primary: !root.destructive || root.completedWithError
                 destructive: root.destructive && !root.completedWithError
                 onClicked: root.confirmAction()
             }
-            SettingsButton { visible: !root.completedWithError; text: qsTr("Cancel"); onClicked: root.close() }
+            SettingsButton {
+                visible: root.showCancelButton && !root.completedWithError
+                text: qsTr("Cancel")
+                onClicked: root.close()
+            }
         }
     }
 }

@@ -128,6 +128,11 @@ brew install cmake qt libraw exiv2 jpeg-turbo jpeg-xl openexr little-cms2 pkgcon
 
 应用生成于 `build/macos-preset-release/src/qml/Lumen.app`。自定义 Qt 路径、签名与打包选项见 `./build_macos.sh --help`。
 
+为 GitHub Release 启用 macOS 应用内更新时，使用 Sparkle 的 `generate_keys` 生成专用密钥。
+在仓库 Actions 中将公钥设为变量 `MVPVIEW_SPARKLE_PUBLIC_KEY`，将 `generate_keys -x` 导出的私钥设为密钥 `MVPVIEW_SPARKLE_PRIVATE_KEY`。
+发布流程会打包 Sparkle，并签名 DMG 同版本的 `lumen-appcast.xml` 及其中引用的 DMG。
+已安装的版本和后续发布包都需要配置同一套 Sparkle 更新密钥。无签名更新源的构建会在更新弹窗中提供手动下载入口。
+
 
 直接使用 CMake / Crashpad 配置
 

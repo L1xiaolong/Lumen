@@ -33,6 +33,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <atomic>
 #include <exception>
 #include <new>
 #include <thread>
@@ -48,6 +49,7 @@ namespace {
 // GUI-thread-only admission: editing is serialized across all browser panes.
 QSet<BrowseController*> transformObservers;
 QString transformingPath;
+std::atomic<int> pendingTransfers{0};
 QString transformInProgress() {
     return QCoreApplication::translate("FileOperations", "An image operation is in progress. Please wait.");
 }
@@ -562,6 +564,22 @@ QSize BrowseController::selectedImageSize() const {
 }
 
 void BrowseController::openDirectory(const QString& path) { openDirectoryInternal(path, true); }
+
+void BrowseController::openRecentDirectory(const QString& path) {
+    openDirectoryInternal(path, true, false, std::nullopt, true);
+}
+
+void BrowseController::removeRecentDirectory(const QString& path) {
+    QSettings settings;
+    if (recentFolders_.removeAll(path) > 0) {
+        settings.setValue(QStringLiteral("browser/recentFolders"), recentFolders_);
+        emit recentFoldersChanged();
+    }
+    if (recentLocations_.removeAll(path) > 0) {
+        settings.setValue(QStringLiteral("browser/recentLocations"), recentLocations_);
+        emit recentLocationsChanged();
+    }
+}
 
 void BrowseController::openDirectoryUrl(const QUrl& url) {
     if (url.isLocalFile()) openDirectoryInternal(url.toLocalFile(), true);
@@ -1470,7 +1488,8 @@ void BrowseController::failNetworkDirectory(bool timedOut) {
 
 void BrowseController::openDirectoryInternal(const QString& path, bool addToHistory,
                                              bool pathAlreadyValidated,
-                                             std::optional<QVector<ImageFileRecord>> preparedFiles) {
+                                             std::optional<QVector<ImageFileRecord>> preparedFiles,
+                                             bool fromRecents) {
     networkDirectoryTimer_->stop();
     pendingNetworkPath_.clear();
     const quint64 requestGeneration = ++directoryRequestGeneration_;
@@ -1505,6 +1524,10 @@ void BrowseController::openDirectoryInternal(const QString& path, bool addToHist
         return;
     }
     const QFileInfo info(path);
+    if (fromRecents && !info.isDir()) {
+        emit recentDirectoryMissing(path);
+        return;
+    }
     if (!pathAlreadyValidated &&
         (!info.exists() || !info.isDir() || !DirectoryScanner::isBrowsableEntry(info))) {
         setStatusText(QCoreApplication::translate("BrowseController", "Folder is hidden, unreadable, or unavailable: %1").arg(path));
@@ -1665,9 +1688,11 @@ void BrowseController::transferPaths(const QStringList& paths, bool move,
                       .arg(move ? QStringLiteral("Moving") : QStringLiteral("Copying"))
                       .arg(paths.size()));
     const QPointer<BrowseController> self(this);
+    ++pendingTransfers;
     QThreadPool::globalInstance()->start([self, paths, target, move] {
         FileTransferResult result = FileTransferOperation::execute(
             paths, target, move ? FileTransferMode::Move : FileTransferMode::Copy);
+        --pendingTransfers;
         if (!self) {
             return;
         }
@@ -1702,6 +1727,10 @@ void BrowseController::transferPaths(const QStringList& paths, bool move,
             },
             Qt::QueuedConnection);
     });
+}
+
+bool BrowseController::hasPendingFileOperations() {
+    return !transformingPath.isEmpty() || pendingTransfers.load() > 0;
 }
 
 QStringList BrowseController::selectedImagePaths() const {

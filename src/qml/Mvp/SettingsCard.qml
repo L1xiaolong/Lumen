@@ -26,6 +26,7 @@ Popup {
 
     property int currentSection: 0
     property var settingsController: null
+    signal updateDetailsRequested()
     property var diagnostics: null
     property var scrollPositions: [0, 0, 0, 0, 0]
     property int loadedSection: -1
@@ -150,8 +151,8 @@ Popup {
         case "available": return qsTr("Version %1 is available.").arg(root.settingsController.latestVersion)
         case "downloading": return qsTr("Downloading version %1… %2%").arg(root.settingsController.latestVersion).arg(Math.max(0, root.settingsController.updateDownloadProgress))
         case "verifying": return qsTr("Verifying the downloaded installer…")
-        case "ready": return qsTr("Version %1 is downloaded and verified.").arg(root.settingsController.latestVersion)
-        case "installing": return qsTr("Opening the installer…")
+        case "ready": return qsTr("Waiting for file operations to finish…")
+        case "installing": return qsTr("Installing and restarting Lumen…")
         case "latest": return qsTr("You’re up to date. Version %1 is the latest release.").arg(root.settingsController.latestVersion)
         case "error": return root.settingsController.updateError.length > 0
                     ? qsTr("Update failed: %1").arg(root.settingsController.updateError)
@@ -564,7 +565,7 @@ Popup {
             SettingsHeading { text: qsTr("Update checks") }
             SettingsRow {
                 title: qsTr("Automatically check for updates")
-                description: qsTr("Check each time the app starts. Downloads and installation always require your action.")
+                description: qsTr("Check when Lumen starts. Updating requires your confirmation.")
                 controlWidth: 40
                 SettingsToggle {
                     text: qsTr("Automatically check for updates")
@@ -596,19 +597,15 @@ Popup {
                 SettingsButton {
                     objectName: "checkUpdateButton"
                     text: root.settingsController && root.settingsController.updateState === "error" ? qsTr("Try again") : qsTr("Check now")
-                    enabled: root.settingsController && ["checking", "downloading", "verifying", "installing"].indexOf(root.settingsController.updateState) < 0
-                    onClicked: root.settingsController.checkForUpdates()
+                    enabled: root.settingsController && ["checking", "downloading", "verifying", "ready", "installing"].indexOf(root.settingsController.updateState) < 0
+                    onClicked: root.settingsController.checkForUpdates(true)
                 }
                 SettingsButton {
-                    objectName: "downloadUpdateButton"
-                    visible: root.settingsController && ["available", "downloading", "ready"].indexOf(root.settingsController.updateState) >= 0
-                    primary: root.settingsController && root.settingsController.updateState !== "downloading"
-                    text: !root.settingsController ? "" : root.settingsController.updateState === "downloading" ? qsTr("Cancel download") : root.settingsController.updateState === "ready" ? qsTr("Install update") : qsTr("Download update")
-                    onClicked: {
-                        if (root.settingsController.updateState === "downloading") root.settingsController.cancelUpdateDownload()
-                        else if (root.settingsController.updateState === "ready") updateInstallDialog.showConfirmation()
-                        else root.settingsController.downloadUpdate()
-                    }
+                    objectName: "viewUpdateButton"
+                    visible: root.settingsController && root.settingsController.updateState === "available"
+                    primary: true
+                    text: qsTr("View update")
+                    onClicked: root.updateDetailsRequested()
                 }
                 SettingsButton {
                     visible: root.settingsController && root.settingsController.updateState === "error" && root.settingsController.releaseUrl.toString().length > 0
@@ -698,14 +695,6 @@ Popup {
             root.shortcutMessage = qsTr("Default shortcuts restored.")
             close()
         }
-    }
-    AppConfirmDialog {
-        id: updateInstallDialog
-        parent: Overlay.overlay
-        dialogTitle: qsTr("Install this update?")
-        message: qsTr("The verified installer will open and Lumen will close.")
-        confirmText: qsTr("Open installer")
-        onConfirmed: { close(); if (root.settingsController) root.settingsController.installUpdate() }
     }
     AppConfirmDialog {
         id: restoreDialog

@@ -92,6 +92,11 @@ open -a Lumen --args /path/to/images
 
 These dependencies are needed only when **building from source**. The repository provides build presets and release workflows for macOS arm64 and Windows x64. CI runs builds and QML static analysis on both platforms before release.
 
+To enable in-app macOS updates for GitHub Releases, generate a dedicated key pair with Sparkle's `generate_keys`.
+Set the Actions variable `MVPVIEW_SPARKLE_PUBLIC_KEY` to the public key and the Actions secret `MVPVIEW_SPARKLE_PRIVATE_KEY` to the private key exported by `generate_keys -x`.
+The release workflow embeds Sparkle and signs both the DMG and its version-specific `lumen-appcast.xml`.
+Use the same keys for the installed version and subsequent releases. Builds without a signed update feed offer the release page for manual download.
+
 | Dependency | Requirements / purpose |
 | --- | --- |
 | Build tools | CMake 3.25+ and a C++20 compiler; Xcode Command Line Tools on macOS, MSYS2/UCRT64 recommended on Windows |

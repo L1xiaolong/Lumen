@@ -79,6 +79,25 @@ find_package(Qt6 6.9 REQUIRED COMPONENTS
 )
 find_package(Qt6GuiPrivate 6.9 CONFIG REQUIRED)
 
+if(APPLE)
+    # Homebrew's library directory can also contain a second Qt installation.
+    # Resolve Qt's @rpath dependencies against the selected SDK first.
+    get_target_property(_lumen_qt_core_binary Qt6::Core LOCATION)
+    if(_lumen_qt_core_binary MATCHES "^(.+)/[^/]+[.]framework/")
+        set(_lumen_qt_library_dir "${CMAKE_MATCH_1}")
+    else()
+        get_filename_component(_lumen_qt_library_dir "${_lumen_qt_core_binary}" DIRECTORY)
+    endif()
+    list(PREPEND CMAKE_BUILD_RPATH "${_lumen_qt_library_dir}")
+
+    set(_lumen_macos_qt_tools "")
+    if(TARGET Qt6::qtpaths AND TARGET Qt6::macdeployqt)
+        set(_lumen_macos_qt_tools "$<TARGET_FILE:Qt6::qtpaths>\n$<TARGET_FILE:Qt6::macdeployqt>\n")
+    endif()
+    file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/macos-qt-tools-$<CONFIG>.txt"
+        CONTENT "${_lumen_macos_qt_tools}")
+endif()
+
 # The production QML renderer uses Qt's QRhi API.  Keep this check close to
 # dependency discovery so an incomplete Qt SDK fails during configuration with
 # an actionable error instead of much later while compiling qml_image_canvas.

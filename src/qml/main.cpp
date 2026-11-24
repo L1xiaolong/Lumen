@@ -146,7 +146,8 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
             initialDirectory = arguments.at(i);
         }
     }
-    if (initialDirectory.isEmpty() && !appSettings.restoreLastDirectory()) {
+    if (initialDirectory.isEmpty() && !appSettings.restoreLastDirectory() &&
+        appSettings.installedUpdateVersion().isEmpty()) {
         initialDirectory = QDir::homePath();
     }
 #ifdef MVPVIEW_ENABLE_UI_TESTS
@@ -301,6 +302,29 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     // session is deliberately kept inside QML.
     QObject::connect(mainWindow, SIGNAL(quitApplicationRequested()), &app, SLOT(quit()),
                      Qt::QueuedConnection);
+    QTimer updateInstallTimer;
+    updateInstallTimer.setInterval(150);
+    QObject::connect(&appSettings, &mvpview::AppSettings::updateStateChanged, &updateInstallTimer,
+                     [&] {
+        if (appSettings.updateState() == QStringLiteral("ready")) {
+            if (!updateInstallTimer.isActive()) updateInstallTimer.start();
+        } else {
+            updateInstallTimer.stop();
+        }
+        if (appSettings.updateState() == QStringLiteral("error"))
+            mainWindow->setProperty("forceApplicationClose", false);
+    });
+    QObject::connect(&updateInstallTimer, &QTimer::timeout, &app, [&] {
+        if (mvpview::BrowseController::hasPendingFileOperations()) return;
+        if (const auto* pane = browseController.activeBrowsePane();
+            pane && !pane->currentDirectory().isEmpty()) {
+            QSettings().setValue(QStringLiteral("browser/lastDirectory"), pane->currentDirectory());
+        }
+        mainWindow->setProperty("forceApplicationClose", true);
+        appSettings.installPreparedUpdate();
+    });
+    QObject::connect(&appSettings, &mvpview::AppSettings::quitForUpdateRequested, mainWindow,
+                     [mainWindow] { QMetaObject::invokeMethod(mainWindow, "beginApplicationExit"); });
 #ifdef MVPVIEW_ENABLE_UI_TESTS
     // A window sized to the display can be reported as maximized by AppKit.
     if (!uiTestDirectory.isEmpty() && uiTestVisibility == QWindow::Windowed)

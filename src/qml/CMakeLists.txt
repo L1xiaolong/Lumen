@@ -50,6 +50,7 @@ qt_add_qml_module(LumenQml
         Mvp/AppIconButton.qml
         Mvp/AppTextInputDialog.qml
         Mvp/AppConfirmDialog.qml
+        Mvp/UpdateDialog.qml
         Mvp/AppMenu.qml
         Mvp/AppMenuItem.qml
         Mvp/AppMenuSeparator.qml
@@ -228,6 +229,23 @@ set_target_properties(LumenQml PROPERTIES
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
 )
+
+if(APPLE)
+    set(MVPVIEW_SPARKLE_FRAMEWORK "" CACHE PATH "Path to Sparkle.framework for in-app macOS updates")
+    if(MVPVIEW_SPARKLE_FRAMEWORK)
+        enable_language(OBJCXX)
+        set_target_properties(LumenQml PROPERTIES OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED ON)
+        target_sources(LumenQml PRIVATE mac_update_driver.mm mac_update_driver.h)
+        set_source_files_properties(mac_update_driver.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+        target_compile_definitions(LumenQml PRIVATE MVPVIEW_HAS_SPARKLE)
+        target_link_libraries(LumenQml PRIVATE "${MVPVIEW_SPARKLE_FRAMEWORK}" "-framework Foundation")
+        set_property(TARGET LumenQml APPEND PROPERTY BUILD_RPATH "@executable_path/../Frameworks")
+        add_custom_command(TARGET LumenQml POST_BUILD
+            COMMAND /usr/bin/ditto "${MVPVIEW_SPARKLE_FRAMEWORK}"
+                "$<TARGET_BUNDLE_DIR:LumenQml>/Contents/Frameworks/Sparkle.framework"
+            VERBATIM)
+    endif()
+endif()
 
 set(_mvpview_qml_macos_icon "${PROJECT_SOURCE_DIR}/assets/icons/macos/Lumen.icns")
 if(APPLE AND EXISTS "${_mvpview_qml_macos_icon}")

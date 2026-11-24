@@ -87,6 +87,8 @@ BrowseController* BrowseWorkspaceController::createPane(const QString& initialDi
 void BrowseWorkspaceController::connectPane(BrowseController* pane) {
     connect(pane, &BrowseController::directoryOpenFailed, this,
             &BrowseWorkspaceController::directoryOpenFailed);
+    connect(pane, &BrowseController::recentDirectoryMissing, this,
+            &BrowseWorkspaceController::recentDirectoryMissing);
     connect(pane, &BrowseController::selectionChanged, this,
             &BrowseWorkspaceController::recomputeSelection);
     connect(pane, &BrowseController::statusTextChanged, this, [this, pane] {
