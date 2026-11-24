@@ -29,7 +29,13 @@ Item {
     property bool loadingMessageVisible: false
     readonly property bool imageLoading: root.visible && root.controller.loading
     onImageLoadingChanged: loadingMessageVisible = false
-    onVisibleChanged: if (!visible) propertiesDialog.close()
+    onVisibleChanged: {
+        if (visible)
+            return
+        // The menu lives in the window overlay, which stays visible when this page is hidden.
+        fullScreenContextMenu.dismiss()
+        propertiesDialog.close()
+    }
     signal imageFrameReady()
 
     Timer {
@@ -356,10 +362,10 @@ Item {
         delegate: AppMenuItem {
             visible: subMenu !== scaleMenu || !root.panoramaActive
         }
-        // Menus can leave focus on their transient popup window after dismissal,
-        // notably on macOS. Restore it so the page keeps receiving Escape and
-        // navigation shortcuts.
-        onClosed: Qt.callLater(function() { root.forceActiveFocus() })
+        onClosed: Qt.callLater(function() {
+            if (root.imageShortcutsEnabled)
+                root.forceActiveFocus()
+        })
         AppMenuItem { text: qsTr("Cut"); shortcutText: Qt.platform.os === "osx" ? "⌘X" : "Ctrl+X"; onTriggered: root.controller.copyCurrent(true) }
         AppMenuItem { text: qsTr("Copy"); shortcutText: Qt.platform.os === "osx" ? "⌘C" : "Ctrl+C"; onTriggered: root.controller.copyCurrent(false) }
         AppMenuItem { text: qsTr("Rename…"); onTriggered: renameDialog.openWith(root.controller.fileName) }

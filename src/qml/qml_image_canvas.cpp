@@ -903,7 +903,7 @@ class Renderer final : public QQuickRhiItemRenderer {
 QmlImageCanvas::QmlImageCanvas(QQuickItem* parent) : QQuickRhiItem(parent) {
     setMirrorVertically(false);
     setAlphaBlending(false);
-    setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton);
+    setAcceptedMouseButtons(Qt::LeftButton);
     setAcceptHoverEvents(true);
     // Native hover events can be swallowed when a QQuickRhiItem is composited below
     // ordinary Qt Quick overlay items. Polling the cursor while this short-lived canvas
@@ -914,9 +914,7 @@ QmlImageCanvas::QmlImageCanvas(QQuickItem* parent) : QQuickRhiItem(parent) {
     connect(&hoverProbeTimer_, &QTimer::timeout, this,
             &QmlImageCanvas::pollCursorForPixelProbe);
     connect(this, &QQuickItem::visibleChanged, this, &QmlImageCanvas::updateHoverPolling);
-    // Window-level pointer events are also observed directly: full-display presentation
-    // rebuilds the native window, and that can leave item-level hover tracking stale until a
-    // button press hands the item the mouse grab. Watching the window keeps hovering live.
+    // Observe window-level movement too when overlay items intercept canvas hover events.
     connect(this, &QQuickItem::windowChanged, this, &QmlImageCanvas::attachHoverWindow);
     attachHoverWindow(window());
     connect(this, &QQuickItem::widthChanged, this,
@@ -1018,13 +1016,8 @@ bool QmlImageCanvas::liveCursorIsInside() const {
 }
 
 void QmlImageCanvas::probePlatformHoverPosition(const QPointF& scenePosition) {
-    // Converting the main window into a borderless full-display window in place leaves the
-    // platform publishing hover positions that still describe the previous window placement: the
-    // pointer movement itself stops being reported, while Qt Quick keeps re-delivering the last
-    // hover position it saw. Publishing such a replay overwrites every live reading the cursor
-    // poll below produces, which is what froze the pixel readout until the next click.
-    // A position that disagrees with the cursor cannot describe the current pointer, so it is
-    // dropped and the poll stays authoritative.
+    // Qt Quick can replay an earlier pointer position when it updates the scene. Discard it if
+    // the cursor has moved, so a replay cannot overwrite a reading from the current position.
     if (window()) {
         const QPointF livePosition = liveCursorScenePosition();
         if (std::abs(scenePosition.x() - livePosition.x()) > kHoverPositionTolerance ||
@@ -1353,11 +1346,6 @@ void QmlImageCanvas::wheelEvent(QWheelEvent* event) {
 }
 
 void QmlImageCanvas::mousePressEvent(QMouseEvent* event) {
-    if (event->button() == Qt::RightButton) {
-        emit contextMenuRequested(event->position());
-        event->accept();
-        return;
-    }
     activeSlot_ = slotAt(event->position());
     if (activeSlot_ >= 0)
         emit slotActivated(activeSlot_);

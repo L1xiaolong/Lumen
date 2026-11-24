@@ -66,9 +66,7 @@ class QmlImageCanvas : public QQuickRhiItem {
     Q_INVOKABLE void fitAll();
     Q_INVOKABLE void actualPixelsAll();
     Q_INVOKABLE QVariantMap navigationState(int slot) const;
-    // QML HoverHandler bridge used by the fullscreen canvas. Native hover delivery can become
-    // stale after an in-place platform-window transition, so the position is only published while
-    // it still matches the live cursor.
+    // The fullscreen HoverHandler forwards positions here for the same validation as canvas events.
     Q_INVOKABLE void probePixelAt(const QPointF& position);
     Q_INVOKABLE void clearPixelProbe();
 
@@ -88,7 +86,6 @@ class QmlImageCanvas : public QQuickRhiItem {
     // Emitted when a probe needs source samples that only a full decode provides.
     void pixelProbeFullResolutionRequested(int sourceSlot);
     void slotActivated(int slot);
-    void contextMenuRequested(const QPointF& position);
 
   protected:
     QQuickRhiItemRenderer* createRenderer() override;

@@ -9,8 +9,7 @@ qt_add_library(mvpview_platform STATIC
 
 if(APPLE)
     enable_language(OBJCXX)
-    set_source_files_properties(full_screen_presentation_controller.cpp
-        PROPERTIES LANGUAGE OBJCXX)
+    set_source_files_properties(full_screen_presentation_controller.cpp PROPERTIES LANGUAGE OBJCXX)
     target_link_libraries(mvpview_platform PRIVATE "-framework AppKit")
 endif()
 

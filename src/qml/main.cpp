@@ -17,6 +17,10 @@
 #include "qml/thumbnail_image_provider.h"
 #include "qml/window_chrome_controller.h"
 
+#ifdef MVPVIEW_ENABLE_UI_TESTS
+#include "qml/fullscreen_menu_test.h"
+#endif
+
 #include <QCoreApplication>
 #include <algorithm>
 #include <QDir>
@@ -145,6 +149,26 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     if (initialDirectory.isEmpty() && !appSettings.restoreLastDirectory()) {
         initialDirectory = QDir::homePath();
     }
+#ifdef MVPVIEW_ENABLE_UI_TESTS
+    const QString uiTestDirectory = qEnvironmentVariable("LUMEN_FULLSCREEN_TEST_DIRECTORY");
+    const auto uiTestVisibility = qEnvironmentVariable("LUMEN_FULLSCREEN_TEST_MODE") ==
+        QStringLiteral("maximized") ? QWindow::Maximized : QWindow::Windowed;
+    QString uiTestFixture;
+    if (!uiTestDirectory.isEmpty()) {
+        uiTestFixture = qEnvironmentVariable("LUMEN_FULLSCREEN_TEST_EXR");
+        if (uiTestFixture.isEmpty())
+            uiTestFixture = mvpview::createFullScreenMenuFixture(uiTestDirectory);
+        const QFileInfo fixture(uiTestFixture);
+        if (!fixture.isFile() || fixture.suffix().compare(QStringLiteral("exr"), Qt::CaseInsensitive) != 0) {
+            qCritical() << "The full-screen menu test requires an EXR image" << uiTestFixture;
+            return 1;
+        }
+        initialDirectory = fixture.absolutePath();
+        displayMode = QStringLiteral("grid");
+        lastMainWindowStateWasMaximized = uiTestVisibility == QWindow::Maximized;
+        appSettings.setAutomaticUpdateChecks(false);
+    }
+#endif
     // The browse page can use the software scene graph for deterministic CI
     // captures. ComparePage contains a QQuickRhiItem and therefore must keep a
     // hardware RHI backend even when --screenshot-native was not specified.
@@ -164,7 +188,7 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     mvpview::ImagePropertiesController imagePropertiesController(browseController.loader());
     mvpview::ImagePropertiesController fullScreenPropertiesController(browseController.loader());
     mvpview::FullScreenController fullScreenController(browseController.loader());
-    mvpview::FullScreenPresentationController fullScreenPresentationController;
+    mvpview::FullScreenPresentationController fullScreenPresentation;
     mvpview::RawParametersController rawParametersController(browseController.loader());
     QObject::connect(&appSettings, &mvpview::AppSettings::colorDisplayChanged, &app, [&] {
         mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::settings(), QStringLiteral("settings.color_display"),
@@ -201,8 +225,8 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
                                              &imagePropertiesController);
     engine.rootContext()->setContextProperty(QStringLiteral("fullScreenController"),
                                              &fullScreenController);
-    engine.rootContext()->setContextProperty(QStringLiteral("fullScreenPresentationController"),
-                                             &fullScreenPresentationController);
+    engine.rootContext()->setContextProperty(QStringLiteral("fullScreenPresentation"),
+                                             &fullScreenPresentation);
     engine.rootContext()->setContextProperty(QStringLiteral("rawParametersController"),
                                              &rawParametersController);
     engine.rootContext()->setContextProperty(QStringLiteral("initialComparePaths"), initialComparePaths);
@@ -243,20 +267,26 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     // surface, so "auto" has to follow it. The report is only populated once the platform window
     // exists, and these callbacks may arrive from the render thread, so they are queued to the
     // main thread through the settings object.
-    const auto applySurfaceColorSpace = [mainWindow, &appSettings] {
-        appSettings.setSurfaceColorSpace(mainWindow->format().colorSpace());
+    const auto presentedWindow = [mainWindow] {
+        auto* window = mainWindow->property("presentationWindow").value<QQuickWindow*>();
+        return window && window->isVisible() ? window : mainWindow;
+    };
+    const auto applySurfaceColorSpace = [presentedWindow, &appSettings] {
+        appSettings.setSurfaceColorSpace(presentedWindow()->format().colorSpace());
     };
     QObject::connect(mainWindow, &QQuickWindow::sceneGraphInitialized, &appSettings,
                      [applySurfaceColorSpace] { applySurfaceColorSpace(); });
+    if (auto* viewer = mainWindow->findChild<QQuickWindow*>(QStringLiteral("imageViewerWindow"))) {
+        QObject::connect(viewer, &QQuickWindow::sceneGraphInitialized, &appSettings,
+                         applySurfaceColorSpace, Qt::QueuedConnection);
+        QObject::connect(viewer, &QWindow::screenChanged, &appSettings, applySurfaceColorSpace);
+        QObject::connect(viewer, &QWindow::visibleChanged, &appSettings, applySurfaceColorSpace);
+    }
     mainWindow->create();
     windowChrome.attach(mainWindow);
     const auto synchronizeChromeVisibility = [&] {
-        windowChrome.setSuspended(fullScreenPresentationController.active()
-                                   || mainWindow->visibility() == QWindow::FullScreen);
+        windowChrome.setSuspended(mainWindow->visibility() == QWindow::FullScreen);
     };
-    QObject::connect(&fullScreenPresentationController,
-                     &mvpview::FullScreenPresentationController::activeChanged,
-                     &windowChrome, synchronizeChromeVisibility);
     QObject::connect(mainWindow, &QWindow::visibilityChanged,
                      &windowChrome, synchronizeChromeVisibility);
     applySurfaceColorSpace();
@@ -271,6 +301,11 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     // session is deliberately kept inside QML.
     QObject::connect(mainWindow, SIGNAL(quitApplicationRequested()), &app, SLOT(quit()),
                      Qt::QueuedConnection);
+#ifdef MVPVIEW_ENABLE_UI_TESTS
+    // A window sized to the display can be reported as maximized by AppKit.
+    if (!uiTestDirectory.isEmpty() && uiTestVisibility == QWindow::Windowed)
+        mainWindow->resize(mainWindow->minimumSize());
+#endif
     if (lastMainWindowStateWasMaximized) {
         mainWindow->showMaximized();
     } else {
@@ -283,9 +318,6 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     QObject::connect(
         mainWindow, &QWindow::visibilityChanged, &app,
         [mainWindow, &lastMainWindowStateWasMaximized](QWindow::Visibility visibility) {
-#ifndef Q_OS_WIN
-            Q_UNUSED(mainWindow);
-#endif
 #ifdef Q_OS_WIN
             if (visibility == QWindow::Hidden
                 && mainWindow->property("applicationExitPending").toBool()) {
@@ -293,6 +325,7 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
                 return;
             }
 #endif
+            if (mainWindow->property("fullScreenUsesWindow").toBool()) return;
             if (visibility == QWindow::Maximized) {
                 lastMainWindowStateWasMaximized = true;
             } else if (visibility == QWindow::Windowed) {
@@ -341,16 +374,22 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
 
     if (!screenshotPath.isEmpty()) {
         QTimer::singleShot(screenshotDelay, &app,
-                           [&app, &engine, screenshotPath] {
-            auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
-            if (!window || !window->grabWindow().save(screenshotPath)) {
+                           [&app, mainWindow, presentedWindow, screenshotPath] {
+            if (!presentedWindow()->grabWindow().save(screenshotPath)) {
                 app.exit(2);
                 return;
             }
-            window->setProperty("forceApplicationClose", true);
+            mainWindow->setProperty("forceApplicationClose", true);
             app.quit();
         });
     }
+#ifdef MVPVIEW_ENABLE_UI_TESTS
+    if (!uiTestDirectory.isEmpty()) {
+        QTimer::singleShot(0, &app, [&app, &appSettings, mainWindow, uiTestVisibility, uiTestFixture] {
+            app.exit(mvpview::testFullScreenMenu(*mainWindow, uiTestVisibility, uiTestFixture, appSettings));
+        });
+    }
+#endif
     return app.exec();
 }
 
@@ -358,6 +397,15 @@ int main(int argc, char* argv[]) {
     QCoreApplication::setApplicationName(QStringLiteral("Lumen"));
     QCoreApplication::setOrganizationName(QStringLiteral("MvpView"));
     QCoreApplication::setApplicationVersion(QStringLiteral(MVPVIEW_PROJECT_VERSION));
+#ifdef MVPVIEW_ENABLE_UI_TESTS
+    const QString uiTestDirectory = qEnvironmentVariable("LUMEN_FULLSCREEN_TEST_DIRECTORY");
+    if (!uiTestDirectory.isEmpty()) {
+        QStandardPaths::setTestModeEnabled(true);
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                           QDir(uiTestDirectory).filePath(QStringLiteral("settings")));
+    } else
+#endif
     if (!mvpview::migrateLegacySettings())
         qWarning("Could not finish migrating legacy settings to Lumen");
     int result = 0;

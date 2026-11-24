@@ -3,6 +3,8 @@ import QtQuick.Controls
 
 Menu {
     id: control
+    // Keep all custom menus attached to the Qt Quick window's input and focus routing.
+    popupType: Popup.Item
     implicitWidth: 220
     padding: 6
     topPadding: 6

@@ -232,7 +232,10 @@ AppSettings::AppSettings(QGuiApplication* application, QObject* parent)
     }
 }
 
-AppSettings::~AppSettings() = default;
+AppSettings::~AppSettings() {
+    updateCheckThread_.quit();
+    updateCheckThread_.wait();
+}
 
 QString AppSettings::language() const { return language_; }
 
@@ -545,9 +548,6 @@ void AppSettings::checkForUpdates() {
         updateState_ == QStringLiteral("verifying") ||
         updateState_ == QStringLiteral("installing"))
         return;
-    if (!networkManager_)
-        networkManager_ = new QNetworkAccessManager(this);
-
     cancelUpdateRequested_ = false;
     installerUrl_.clear();
     installerAssetName_.clear();
@@ -573,61 +573,75 @@ void AppSettings::checkForUpdates() {
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
     request.setTransferTimeout(30'000);
-    QNetworkReply* reply = networkManager_->get(request);
-    activeUpdateReply_ = reply;
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
-        if (activeUpdateReply_ == reply)
-            activeUpdateReply_.clear();
-        QSettings().setValue(QLatin1String(kLastUpdateCheckKey), QDateTime::currentDateTimeUtc());
-        const auto deleteReply = qScopeGuard([reply] { reply->deleteLater(); });
-        if (reply->error() != QNetworkReply::NoError) {
-            setUpdateState(QStringLiteral("error"));
-            return;
-        }
-        const QJsonObject release = QJsonDocument::fromJson(reply->readAll()).object();
-        QString version = release.value(QStringLiteral("tag_name")).toString();
-        while (version.startsWith(QLatin1Char('v'), Qt::CaseInsensitive))
-            version.remove(0, 1);
-        const QUrl url(release.value(QStringLiteral("html_url")).toString());
-        if (version.isEmpty() || !url.isValid()) {
-            setUpdateState(QStringLiteral("error"));
-            return;
-        }
-        const bool available =
-            QVersionNumber::compare(QVersionNumber::fromString(version),
-                                    QVersionNumber::fromString(applicationVersion())) > 0;
-        if (!available) {
-            setUpdateState(QStringLiteral("latest"), version, url);
-            return;
-        }
+    if (!updateCheckWorker_) {
+        updateCheckWorker_ = new QObject;
+        updateCheckWorker_->moveToThread(&updateCheckThread_);
+        connect(&updateCheckThread_, &QThread::finished, updateCheckWorker_, &QObject::deleteLater);
+        updateCheckThread_.setObjectName(QStringLiteral("Release update check"));
+        updateCheckThread_.start();
+    }
 
-        const QString suffix = platformInstallerSuffix();
-        const QRegularExpression sha256DigestPattern(
-            QStringLiteral("^sha256:([0-9a-fA-F]{64})$"));
-        const QJsonArray assets = release.value(QStringLiteral("assets")).toArray();
-        for (const QJsonValue& value : assets) {
-            const QJsonObject asset = value.toObject();
-            const QString name = asset.value(QStringLiteral("name")).toString();
-            const QUrl downloadUrl(
-                asset.value(QStringLiteral("browser_download_url")).toString());
-            if (!suffix.isEmpty() && name.endsWith(suffix, Qt::CaseInsensitive)) {
-                installerAssetName_ = name;
-                installerUrl_ = downloadUrl;
-                installerAssetSize_ = asset.value(QStringLiteral("size")).toInteger();
-                const QRegularExpressionMatch digestMatch = sha256DigestPattern.match(
-                    asset.value(QStringLiteral("digest")).toString());
-                expectedInstallerSha256_ =
-                    digestMatch.hasMatch() ? digestMatch.captured(1).toLower() : QString{};
-            }
+    // Qt can resolve the system proxy synchronously when initiating an HTTP request.
+    auto* worker = updateCheckWorker_;
+    QMetaObject::invokeMethod(worker, [this, worker, request] {
+        auto* manager = new QNetworkAccessManager(worker);
+        auto* reply = manager->get(request);
+        connect(reply, &QNetworkReply::finished, manager, [this, manager, reply] {
+            const QByteArray releaseData = reply->error() == QNetworkReply::NoError
+                ? reply->readAll() : QByteArray{};
+            QMetaObject::invokeMethod(this, [this, releaseData] {
+                finishUpdateCheck(releaseData);
+            }, Qt::QueuedConnection);
+            manager->deleteLater();
+        });
+    }, Qt::QueuedConnection);
+}
+
+void AppSettings::finishUpdateCheck(const QByteArray& releaseData) {
+    QSettings().setValue(QLatin1String(kLastUpdateCheckKey), QDateTime::currentDateTimeUtc());
+    const QJsonObject release = QJsonDocument::fromJson(releaseData).object();
+    QString version = release.value(QStringLiteral("tag_name")).toString();
+    while (version.startsWith(QLatin1Char('v'), Qt::CaseInsensitive))
+        version.remove(0, 1);
+    const QUrl url(release.value(QStringLiteral("html_url")).toString());
+    if (version.isEmpty() || !url.isValid()) {
+        setUpdateState(QStringLiteral("error"));
+        return;
+    }
+    const bool available =
+        QVersionNumber::compare(QVersionNumber::fromString(version),
+                                QVersionNumber::fromString(applicationVersion())) > 0;
+    if (!available) {
+        setUpdateState(QStringLiteral("latest"), version, url);
+        return;
+    }
+
+    const QString suffix = platformInstallerSuffix();
+    const QRegularExpression sha256DigestPattern(
+        QStringLiteral("^sha256:([0-9a-fA-F]{64})$"));
+    const QJsonArray assets = release.value(QStringLiteral("assets")).toArray();
+    for (const QJsonValue& value : assets) {
+        const QJsonObject asset = value.toObject();
+        const QString name = asset.value(QStringLiteral("name")).toString();
+        const QUrl downloadUrl(
+            asset.value(QStringLiteral("browser_download_url")).toString());
+        if (!suffix.isEmpty() && name.endsWith(suffix, Qt::CaseInsensitive)) {
+            installerAssetName_ = name;
+            installerUrl_ = downloadUrl;
+            installerAssetSize_ = asset.value(QStringLiteral("size")).toInteger();
+            const QRegularExpressionMatch digestMatch = sha256DigestPattern.match(
+                asset.value(QStringLiteral("digest")).toString());
+            expectedInstallerSha256_ =
+                digestMatch.hasMatch() ? digestMatch.captured(1).toLower() : QString{};
         }
-        if (installerAssetName_.isEmpty() || !isAllowedUpdateUrl(installerUrl_) ||
-            expectedInstallerSha256_.isEmpty()) {
-            updateError_ = QCoreApplication::translate("UpdateErrors", "This release has no compatible installer that can be verified. Open the release page for available downloads.");
-            setUpdateState(QStringLiteral("error"), version, url);
-            return;
-        }
-        setUpdateState(QStringLiteral("available"), version, url);
-    });
+    }
+    if (installerAssetName_.isEmpty() || !isAllowedUpdateUrl(installerUrl_) ||
+        expectedInstallerSha256_.isEmpty()) {
+        updateError_ = QCoreApplication::translate("UpdateErrors", "This release has no compatible installer that can be verified. Open the release page for available downloads.");
+        setUpdateState(QStringLiteral("error"), version, url);
+        return;
+    }
+    setUpdateState(QStringLiteral("available"), version, url);
 }
 
 void AppSettings::downloadUpdate() {

@@ -200,6 +200,24 @@ target_link_libraries(LumenQml PRIVATE
 )
 mvpview_enable_warnings(LumenQml)
 
+if(BUILD_TESTING AND MVPVIEW_ENABLE_UI_TESTS)
+    find_package(Qt6 6.9 REQUIRED COMPONENTS Test)
+    target_sources(LumenQml PRIVATE fullscreen_menu_test.cpp fullscreen_menu_test.h)
+    target_link_libraries(LumenQml PRIVATE Qt6::Test OpenEXR::OpenEXR)
+    if(APPLE)
+        target_link_libraries(LumenQml PRIVATE "-framework CoreGraphics")
+    elseif(WIN32)
+        target_link_libraries(LumenQml PRIVATE user32)
+    endif()
+    target_compile_definitions(LumenQml PRIVATE MVPVIEW_ENABLE_UI_TESTS)
+    foreach(mode IN ITEMS windowed maximized)
+        add_test(NAME fullscreen_menu_${mode} COMMAND LumenQml)
+        set_tests_properties(fullscreen_menu_${mode} PROPERTIES
+            ENVIRONMENT "LUMEN_FULLSCREEN_TEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/test-fullscreen-${mode};LUMEN_FULLSCREEN_TEST_MODE=${mode}"
+            RUN_SERIAL TRUE TIMEOUT 60)
+    endforeach()
+endif()
+
 # The QML executable is the sole production application artifact.
 set_target_properties(LumenQml PROPERTIES
     WIN32_EXECUTABLE ON

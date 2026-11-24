@@ -57,7 +57,7 @@ ApplicationWindow {
     function openSettings(section) {
         if (settingsCard && settingsCard.visible)
             return
-        settingsReturnFocus = window.activeFocusItem
+        settingsReturnFocus = presentationWindow.activeFocusItem
         pendingSettingsSection = section === undefined ? 0 : section
         settingsLoader.active = true
         if (settingsCard) { settingsCard.currentSection = pendingSettingsSection; settingsCard.open() }
@@ -65,15 +65,13 @@ ApplicationWindow {
     property bool showingCompare: false
     property bool showingFullScreen: false
     property bool fullScreenTransitioning: false
-    property bool enteringFullScreen: false
-    property var fullScreenEnterAction: null
-    property int coverFramesRemaining: 0
-    property bool instantFullScreenActive: false
+    property bool fullScreenUsesWindow: false
+    readonly property Window presentationWindow: fullScreenUsesWindow ? imageViewer : window
+    readonly property Item presentationOverlay: fullScreenUsesWindow ? imageViewer.Overlay.overlay : window.Overlay.overlay
     property var pendingFullScreenPaths: []
     property int pendingFullScreenIndex: 0
     property bool forceApplicationClose: false
     property bool applicationExitPending: false
-    property int visibilityBeforeFullScreen: Window.Windowed
     signal quitApplicationRequested()
 
     Binding {
@@ -101,74 +99,42 @@ ApplicationWindow {
         return screen
     }
 
-    function completeFullScreenOpen() {
-        if (!fullScreenTransitioning || !enteringFullScreen
-                || showingFullScreen || !fullScreenPage
-                || (instantFullScreenActive
-                    ? !fullScreenPresentationController.active
-                    : visibility !== Window.FullScreen))
+    function beginFullScreenView() {
+        if (!fullScreenTransitioning || showingFullScreen || !fullScreenPage)
             return
 
-        // Only create the image canvas after the native window has reached its final size.
-        // Otherwise the first image is visibly fitted twice (windowed, then full-screen).
+        // The canvas is laid out at its final size before it draws the first image.
         fullScreenPage.open(pendingFullScreenPaths, pendingFullScreenIndex)
         pendingFullScreenPaths = []
         showingFullScreen = true
+        if (fullScreenUsesWindow) {
+            // Cocoa already considers the borderless screen-sized window zoomed. Request that
+            // state so Qt does not unzoom it as it would with showNormal/show.
+            if (Qt.platform.os === "osx")
+                imageViewer.showMaximized()
+            else
+                imageViewer.showFullScreen()
+            imageViewer.raise()
+            imageViewer.requestActivate()
+        }
         fullScreenPage.forceActiveFocus()
-        // Keep the cover until the canvas has uploaded and drawn the first image.
-        // Finishing the asynchronous decode alone does not make a frame ready to display.
     }
 
     function openFullScreen(paths, initialIndex) {
         if (!paths || paths.length === 0 || showingFullScreen || fullScreenTransitioning)
             return
         showingCompare = false
-        fullScreenLoader.active = true
-        const targetScreen = screenAtWindowCenter()
-        visibilityBeforeFullScreen = visibility
-        // Native full screen can add a long system transition. Turn the existing Cocoa window or
-        // Windows HWND into a borderless full-display window instead, so there is no second white
-        // window and no incomplete transient-window coverage. A main window already in its native
-        // full-screen state keeps the cheaper in-place page switch.
-        instantFullScreenActive = (Qt.platform.os === "osx" || Qt.platform.os === "windows")
-                && visibilityBeforeFullScreen !== Window.FullScreen
         pendingFullScreenPaths = paths
         pendingFullScreenIndex = initialIndex
-        enteringFullScreen = true
+        fullScreenUsesWindow = visibility !== Window.FullScreen
+        if (fullScreenUsesWindow) {
+            imageViewer.screen = screenAtWindowCenter()
+            fullScreenPresentation.prepare(imageViewer)
+        }
         fullScreenTransitioning = true
-        // The first swap may belong to a frame already in flight. Wait for the next one as
-        // well so the cover has actually been submitted before resizing the native window.
-        coverFramesRemaining = 2
-        fullScreenEnterAction = function() {
-            if (!window.enteringFullScreen)
-                return
-            if (window.instantFullScreenActive
-                    && !fullScreenPresentationController.begin(window)) {
-                window.instantFullScreenActive = false
-            }
-            if (!window.instantFullScreenActive) {
-                // The native path uses the main window itself. Select its current physical
-                // display before changing state so Qt never migrates the image canvas later.
-                if (targetScreen)
-                    window.screen = targetScreen
-                window.showFullScreen()
-            }
-            Qt.callLater(function() { window.completeFullScreenOpen() })
-        }
-        window.update()
-    }
-
-    onFrameSwapped: {
-        if (!fullScreenEnterAction)
-            return
-        coverFramesRemaining -= 1
-        if (coverFramesRemaining > 0) {
-            window.update()
-        } else {
-            const enter = fullScreenEnterAction
-            fullScreenEnterAction = null
-            Qt.callLater(enter)
-        }
+        fullScreenLoader.active = true
+        if (fullScreenPage)
+            beginFullScreenView()
     }
 
     function closeCompare() {
@@ -181,28 +147,22 @@ ApplicationWindow {
     }
 
     function closeFullScreen() {
-        if (!showingFullScreen)
+        if (!showingFullScreen && !fullScreenTransitioning)
             return
 
-        fullScreenController.closeSession()
-        fullScreenTransitioning = true
-        enteringFullScreen = false
         showingFullScreen = false
-        if (instantFullScreenActive) {
-            fullScreenPresentationController.end()
-        } else if (visibilityBeforeFullScreen === Window.Maximized) {
-            showMaximized()
-        } else if (visibilityBeforeFullScreen === Window.FullScreen) {
-            showFullScreen()
-        } else {
-            showNormal()
+        fullScreenTransitioning = false
+        pendingFullScreenPaths = []
+        if (settingsCard && settingsCard.visible)
+            settingsCard.close()
+        fullScreenController.closeSession()
+        if (fullScreenUsesWindow) {
+            imageViewer.hide()
+            window.requestActivate()
         }
-        Qt.callLater(function() {
-            window.instantFullScreenActive = false
-            window.fullScreenTransitioning = false
-            browseController.refreshAll()
-            browsePage.forceActiveFocus()
-        })
+        fullScreenUsesWindow = false
+        browseController.refreshAll()
+        Qt.callLater(function() { browsePage.forceActiveFocus() })
     }
 
     function beginApplicationExit() {
@@ -211,21 +171,16 @@ ApplicationWindow {
         applicationExitPending = true
         compareController.closeSession()
         fullScreenController.closeSession()
-        if (instantFullScreenActive) {
-            fullScreenPresentationController.end()
-        }
         pendingFullScreenPaths = []
-        fullScreenEnterAction = null
         fullScreenTransitioning = false
-        enteringFullScreen = false
-        instantFullScreenActive = false
+        imageViewer.hide()
         showingCompare = false
         showingFullScreen = false
         quitApplicationRequested()
     }
 
     onClosing: function(close) {
-        if (!forceApplicationClose && !applicationExitPending && showingFullScreen) {
+        if (!forceApplicationClose && !applicationExitPending && (showingFullScreen || fullScreenTransitioning)) {
             close.accepted = false
             Qt.callLater(function() { window.closeFullScreen() })
             return
@@ -243,9 +198,35 @@ ApplicationWindow {
         beginApplicationExit()
     }
     onVisibilityChanged: {
-        if (fullScreenTransitioning && enteringFullScreen
-                && window.visibility === Window.FullScreen)
-            Qt.callLater(function() { window.completeFullScreenOpen() })
+        if (showingFullScreen && !fullScreenUsesWindow
+                && (visibility === Window.Windowed || visibility === Window.Maximized))
+            closeFullScreen()
+    }
+    onActiveChanged: {
+        if (active && imageViewer.visible && !imageViewer.active)
+            Qt.callLater(function() {
+                if (window.active && imageViewer.visible && !imageViewer.active)
+                    imageViewer.requestActivate()
+            })
+    }
+
+    ApplicationWindow {
+        id: imageViewer
+        objectName: "imageViewerWindow"
+        transientParent: window
+        title: window.title
+        flags: Qt.Window | Qt.FramelessWindowHint
+        color: Theme.canvasBackground
+        topPadding: 0
+        palette: window.palette
+        visible: false
+        onVisibleChanged: fullScreenPresentation.setActive(visible)
+        onClosing: function(close) {
+            if (window.forceApplicationClose || window.applicationExitPending)
+                return
+            close.accepted = false
+            Qt.callLater(window.closeFullScreen)
+        }
     }
 
     Component.onCompleted: {
@@ -271,11 +252,12 @@ ApplicationWindow {
         titleBarHeight: window.unifiedTitleBarHeight || Theme.toolbarHeight
         captionButtonsWidth: windowChrome.captionButtonsWidth
         controller: browseController.activePane
+        enabled: !window.fullScreenUsesWindow
         workspaceController: browseController
         propertiesController: imagePropertiesController
         rawController: rawParametersController
         settingsController: appSettings
-        visible: !window.showingCompare && !window.showingFullScreen
+        visible: !window.showingCompare && (!window.showingFullScreen || window.fullScreenUsesWindow)
         externalModalVisible: settingsCard ? settingsCard.visible : false
         onFullScreenRequested: function(paths, initialIndex) {
             window.openFullScreen(paths, initialIndex)
@@ -288,9 +270,9 @@ ApplicationWindow {
         anchors.right: parent.right
         z: 200
         controller: windowChrome
+        enabled: !window.fullScreenUsesWindow
         maximized: window.visibility === Window.Maximized
-        visible: windowChrome.supported && !window.showingFullScreen
-                 && !window.fullScreenTransitioning && window.visibility !== Window.FullScreen
+        visible: windowChrome.supported && window.visibility !== Window.FullScreen
     }
     Loader {
         id: compareLoader
@@ -318,34 +300,27 @@ ApplicationWindow {
     }
     Loader {
         id: fullScreenLoader
-        parent: window.contentItem
+        parent: window.presentationWindow.contentItem
         anchors.fill: parent
         active: false
         asynchronous: true
         visible: window.showingFullScreen
-        onLoaded: Qt.callLater(function() { window.completeFullScreenOpen() })
+        onLoaded: window.beginFullScreenView()
         sourceComponent: Component {
-    FullScreenPage {
-        controller: fullScreenController
-        externalModalVisible: window.settingsCard ? window.settingsCard.visible : false
-        propertiesController: fullScreenPropertiesController
-        settingsController: appSettings
-        messageParent: window.contentItem
-        onCloseRequested: window.closeFullScreen()
-        onImageFrameReady: {
-            if (window.enteringFullScreen && window.showingFullScreen) {
-                window.enteringFullScreen = false
-                window.fullScreenTransitioning = false
+            FullScreenPage {
+                controller: fullScreenController
+                externalModalVisible: window.settingsCard ? window.settingsCard.visible : false
+                propertiesController: fullScreenPropertiesController
+                settingsController: appSettings
+                messageParent: window.presentationWindow.contentItem
+                onCloseRequested: window.closeFullScreen()
+                onImageFrameReady: window.fullScreenTransitioning = false
+                onImageErrorChanged: {
+                    if (imageError.length > 0)
+                        window.fullScreenTransitioning = false
+                }
             }
         }
-    }
-        }
-    }
-    Rectangle {
-        anchors.fill: parent
-        visible: window.fullScreenTransitioning
-        color: Theme.canvasBackground
-        z: 10000
     }
     Connections {
         target: fullScreenController
@@ -354,6 +329,7 @@ ApplicationWindow {
 
     ApplicationNotices {
         objectName: "applicationNotices"
+        parent: window.presentationWindow.contentItem
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.rightMargin: 16
@@ -374,7 +350,7 @@ ApplicationWindow {
         onLoaded: { item.currentSection = window.pendingSettingsSection; item.open() }
         sourceComponent: Component {
             SettingsCard {
-                parent: Overlay.overlay
+                parent: window.presentationOverlay
                 settingsController: appSettings
                 onClosed: {
                     if (window.settingsReturnFocus)
@@ -385,9 +361,11 @@ ApplicationWindow {
         }
     }
 
-    ShortcutContext { id: shortcutContext; targetWindow: window }
+    ShortcutContext { id: shortcutContext; targetWindow: window.presentationWindow }
     Shortcut {
-        enabled: (!window.settingsCard || !window.settingsCard.visible) && !shortcutContext.textInputFocused
+        context: Qt.ApplicationShortcut
+        enabled: window.presentationWindow.active &&
+                  (!window.settingsCard || !window.settingsCard.visible) && !shortcutContext.textInputFocused
         sequence: {
             const revision = appSettings.shortcutsRevision
             return appSettings.shortcutFor("settings")

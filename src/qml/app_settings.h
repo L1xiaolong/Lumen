@@ -6,6 +6,7 @@
 #include <QHash>
 #include <QObject>
 #include <QPointer>
+#include <QThread>
 #include <QTranslator>
 #include <QUrl>
 #include <QVariantList>
@@ -154,6 +155,7 @@ class AppSettings final : public QObject {
     void applyLanguage();
     void setUpdateState(const QString& state, const QString& latestVersion = {},
                         const QUrl& releaseUrl = {});
+    void finishUpdateCheck(const QByteArray& releaseData);
     void beginInstallerDownload();
     void failUpdate(const QString& error);
     void clearDownloadedUpdate();
@@ -202,6 +204,8 @@ class AppSettings final : public QObject {
     bool cancelUpdateRequested_ = false;
     QHash<QString, QString> shortcuts_;
     int shortcutsRevision_ = 0;
+    QThread updateCheckThread_;
+    QObject* updateCheckWorker_ = nullptr;
     QNetworkAccessManager* networkManager_ = nullptr;
     QPointer<QNetworkReply> activeUpdateReply_;
     std::unique_ptr<QSaveFile> updateFile_;

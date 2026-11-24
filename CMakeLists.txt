@@ -5,6 +5,7 @@ enable_language(C)
 
 option(MVPVIEW_ENABLE_LCMS2 "Enable embedded ICC conversion with LittleCMS when available" ON)
 option(MVPVIEW_ENABLE_CRASHPAD "Enable macOS Crashpad crash capture when the pinned build succeeds" ON)
+option(MVPVIEW_ENABLE_UI_TESTS "Build and register native window interaction tests" OFF)
 set(MVPVIEW_GITHUB_REPOSITORY "L1xiaolong/Lumen" CACHE STRING
     "GitHub owner/repository used for update checks and project links")
 
@@ -98,6 +99,7 @@ endif()
 
 qt_standard_project_setup()
 include(cmake/Warnings.cmake)
+include(CTest)
 
 execute_process(COMMAND git rev-parse --short=12 HEAD WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     OUTPUT_VARIABLE MVPVIEW_BUILD_ID OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
@@ -107,7 +109,6 @@ endif()
 add_subdirectory(third_party/miniz)
 add_subdirectory(src)
 
-include(CTest)
 # The local test suite is kept outside the public source distribution.
 if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
     add_subdirectory(tests)
