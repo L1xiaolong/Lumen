@@ -87,6 +87,12 @@ jobs:
       - name: Application tests (Windows MSYS2/UCRT64)
         if: runner.os == 'Windows'
         shell: msys2 {0}
+        env:
+          # Hosted runners can run the Qt Quick RHI tests with the D3D11 software adapter.
+          QSG_RHI_BACKEND: d3d11
+          QSG_RHI_PREFER_SOFTWARE_RENDERER: '1'
+          QSG_INFO: '1'
+          QT_FORCE_STDERR_LOGGING: '1'
         run: ctest --test-dir build/windows-msys2-debug --output-on-failure --no-tests=error
       - name: QML static analysis (Windows MSYS2/UCRT64)
         if: runner.os == 'Windows'

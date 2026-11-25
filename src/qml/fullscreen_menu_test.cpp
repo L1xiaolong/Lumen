@@ -241,17 +241,20 @@ int testFullScreenMenu(QQuickWindow& window, QWindow::Visibility initialVisibili
     if (!QTest::qWaitFor([&] { return viewer.isExposed(); }, 3000))
         return failure("the image viewer was not exposed");
     qInfo() << "Full-screen viewer exposed after" << openTime.elapsed() << "ms";
-    if (window.visibility() == QWindow::FullScreen || window.geometry() != initialGeometry ||
-        viewer.geometry() != viewer.screen()->geometry()) {
+    // The browser is hidden to stop background rendering. A hidden window's native
+    // geometry can change until it is shown again, so check placement after exit.
+    // The Windows viewer can overhang the monitor by one pixel to stay composited.
+    const auto viewerCoversScreen = [&viewer] { return viewer.geometry().contains(viewer.screen()->geometry()); };
+    if (window.isVisible() || !viewerCoversScreen()) {
         qCritical() << "Browser" << initialVisibility << initialGeometry << "now" << window.visibility()
                     << window.geometry() << "viewer" << viewer.geometry() << "screen" << viewer.screen()->geometry();
-        return failure("the browser moved or the viewer did not cover its screen");
+        return failure("the browser remained visible or the viewer did not cover its screen");
     }
     if (!QTest::qWaitFor([&] { return !window.property("fullScreenTransitioning").toBool(); }, 12000))
         return failure("full-screen EXR did not render");
     qInfo() << "Full-screen EXR first frame after" << openTime.elapsed() << "ms";
-    if (window.geometry() != initialGeometry || viewer.geometry() != viewer.screen()->geometry())
-        return failure("the window geometry changed while rendering the EXR");
+    if (window.isVisible() || !viewerCoversScreen())
+        return failure("the browser became visible or the viewer stopped covering its screen while rendering the EXR");
 
     auto* page = findVisibleItem(viewer.contentItem(), [](const QQuickItem* item) {
         return item->objectName() == QStringLiteral("fullScreenPage");
@@ -336,7 +339,12 @@ int testFullScreenMenu(QQuickWindow& window, QWindow::Visibility initialVisibili
                    !window.property("showingFullScreen").toBool() &&
                    !window.property("fullScreenTransitioning").toBool() &&
                    !menu->property("visible").toBool();
-        }, 5000)) return failure("the browser and its window placement were not restored");
+        }, 5000)) {
+        qCritical() << "Expected browser" << initialVisibility << initialGeometry << "got" << window.visibility()
+                    << window.geometry() << "viewer visible" << viewer.isVisible()
+                    << "menu visible" << menu->property("visible").toBool();
+        return failure("the browser and its window placement were not restored");
+    }
     return 0;
 }
 

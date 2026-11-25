@@ -67,6 +67,7 @@ ApplicationWindow {
     property bool showingFullScreen: false
     property bool fullScreenTransitioning: false
     property bool fullScreenUsesWindow: false
+    property int browserVisibilityBeforePresentation: Window.Windowed
     readonly property Window presentationWindow: fullScreenUsesWindow ? imageViewer : window
     readonly property Item presentationOverlay: fullScreenUsesWindow ? imageViewer.Overlay.overlay : window.Overlay.overlay
     property var pendingFullScreenPaths: []
@@ -139,6 +140,7 @@ ApplicationWindow {
         pendingFullScreenIndex = initialIndex
         fullScreenUsesWindow = visibility !== Window.FullScreen
         if (fullScreenUsesWindow) {
+            browserVisibilityBeforePresentation = visibility
             // Assigning a screen to a window that already owns a native surface makes Qt
             // recreate that surface; only move the viewer when the screen really changes.
             const targetScreen = screenAtWindowCenter()
@@ -176,7 +178,7 @@ ApplicationWindow {
             // The viewer presentation kept the browser window hidden so it could not
             // render while covered. Restore it before handing activation back, and keep
             // its saved maximized/normal state through the hidden period.
-            window.visible = true
+            window.visibility = browserVisibilityBeforePresentation
             window.requestActivate()
         }
         fullScreenUsesWindow = false

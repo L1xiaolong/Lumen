@@ -7,7 +7,7 @@
 #include <QQuickRhiItem>
 #include <QTimer>
 #include <QVariantMap>
-#include <QtQml/qqml.h>
+#include <QtQmlIntegration/qqmlintegration.h>
 
 namespace mvpview {
 

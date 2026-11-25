@@ -11,7 +11,7 @@
 #include <QSet>
 #include <QTimer>
 #include <QVariantList>
-#include <QtQml/qqml.h>
+#include <QtQmlIntegration/qqmlintegration.h>
 
 #include <memory>
 #include <optional>
