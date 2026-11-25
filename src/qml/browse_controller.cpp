@@ -261,7 +261,7 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
     recentLocations_ = settings.value(QStringLiteral("browser/recentLocations")).toStringList();
     recentLocations_.removeIf([](const QString& path) { return path.trimmed().isEmpty(); });
     while (recentLocations_.size() > 12) recentLocations_.removeLast();
-    gridCellWidth_ = std::clamp(settings.value(QStringLiteral("browser/qmlGridCellWidth"), 160).toInt(),
+    gridCellWidth_ = std::clamp(settings.value(QStringLiteral("browser/qmlGridCellWidth"), 144).toInt(),
                                 144, 320);
     settings.remove(QStringLiteral("browser/qmlInspectorVisible"));
     const int savedSortMode = settings.value(QStringLiteral("browser/sortMode"), 0).toInt();

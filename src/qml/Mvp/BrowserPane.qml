@@ -393,7 +393,7 @@ Rectangle {
             xAxis.enabled: false
             yAxis.enabled: false
             rotationAxis.enabled: false
-            property real thumbnailWidth: 160
+            property real thumbnailWidth: 144
             onActiveChanged: if (active) {
                 thumbnailWidth = root.controller.gridCellWidth
                 contactSheet.cancelFlick()

@@ -73,6 +73,9 @@ ApplicationWindow {
     property int pendingFullScreenIndex: 0
     property bool forceApplicationClose: false
     property bool applicationExitPending: false
+    // Coalesces focus-recovery attempts for the viewer window so activation changes
+    // cannot ping-pong the foreground between the two windows.
+    property real viewerActivationStamp: 0
     signal quitApplicationRequested()
 
     Binding {
@@ -117,6 +120,13 @@ ApplicationWindow {
                 imageViewer.showFullScreen()
             imageViewer.raise()
             imageViewer.requestActivate()
+            // The browser window stays fully covered by the viewer, yet Qt Quick keeps
+            // rendering it (there is no occlusion tracking): every covered present can
+            // stall in the graphics driver and drag the whole GUI thread down with it,
+            // which froze the fullscreen image for tens of seconds with large folders.
+            // Hiding the covered window stops its rendering for the whole presentation;
+            // as a bonus the thumbnail pipeline of the browse page pauses as well.
+            window.visible = false
         }
         fullScreenPage.forceActiveFocus()
     }
@@ -129,7 +139,11 @@ ApplicationWindow {
         pendingFullScreenIndex = initialIndex
         fullScreenUsesWindow = visibility !== Window.FullScreen
         if (fullScreenUsesWindow) {
-            imageViewer.screen = screenAtWindowCenter()
+            // Assigning a screen to a window that already owns a native surface makes Qt
+            // recreate that surface; only move the viewer when the screen really changes.
+            const targetScreen = screenAtWindowCenter()
+            if (targetScreen && imageViewer.screen !== targetScreen)
+                imageViewer.screen = targetScreen
             fullScreenPresentation.prepare(imageViewer)
         }
         fullScreenTransitioning = true
@@ -159,6 +173,10 @@ ApplicationWindow {
         fullScreenController.closeSession()
         if (fullScreenUsesWindow) {
             imageViewer.hide()
+            // The viewer presentation kept the browser window hidden so it could not
+            // render while covered. Restore it before handing activation back, and keep
+            // its saved maximized/normal state through the hidden period.
+            window.visible = true
             window.requestActivate()
         }
         fullScreenUsesWindow = false
@@ -206,15 +224,23 @@ ApplicationWindow {
     onActiveChanged: {
         if (active && imageViewer.visible && !imageViewer.active)
             Qt.callLater(function() {
-                if (window.active && imageViewer.visible && !imageViewer.active)
+                // The browser window stays hidden while the viewer presents, so this only
+                // recovers focus the viewer genuinely lost. The stamp debounces bursts of
+                // activation changes instead of answering every one of them.
+                if (window.active && imageViewer.visible && !imageViewer.active
+                        && Date.now() - window.viewerActivationStamp >= 400) {
+                    window.viewerActivationStamp = Date.now()
                     imageViewer.requestActivate()
+                }
             })
     }
 
     ApplicationWindow {
         id: imageViewer
         objectName: "imageViewerWindow"
-        transientParent: window
+        // Deliberately not transient: the browser window is hidden while this viewer
+        // presents the screen, and an owned window would be hidden together with its
+        // owner on both Windows and Cocoa.
         title: window.title
         flags: Qt.Window | Qt.FramelessWindowHint
         color: Theme.canvasBackground

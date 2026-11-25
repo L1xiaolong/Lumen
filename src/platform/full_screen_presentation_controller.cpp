@@ -13,6 +13,7 @@ namespace mvpview {
 FullScreenPresentationController::~FullScreenPresentationController() { setActive(false); }
 
 void FullScreenPresentationController::prepare(QWindow* window) {
+    window_ = window;
     const QRect bounds = window->screen()->geometry();
     window->setGeometry(bounds);
     // Cocoa can constrain the initial native window rectangle when Qt creates the surface.
@@ -37,6 +38,19 @@ void FullScreenPresentationController::setActive(bool active) {
         (previousOptions_ & ~(NSApplicationPresentationAutoHideDock |
                               NSApplicationPresentationAutoHideMenuBar)) |
         NSApplicationPresentationHideDock | NSApplicationPresentationHideMenuBar;
+#elif defined(Q_OS_WIN)
+    // A borderless window that exactly matches the monitor rectangle makes the DWM engage
+    // its fullscreen optimization (independent flip). In that mode this window's OpenGL
+    // presents stop reaching the composition, and the viewer froze on its first frame
+    // until an occlusion or resize broke the optimization. Qt applies the monitor
+    // rectangle while entering the fullscreen window state, which still covers the
+    // taskbar; overhang the monitor by a pixel on each side right after that so the
+    // window stays in ordinary composited presentation. The screen clips the extra
+    // pixels away, so the visible result is identical.
+    if (active && !window_.isNull()) {
+        const QRect bounds = window_->screen()->geometry();
+        window_->setGeometry(bounds.adjusted(-1, -1, 1, 1));
+    }
 #else
     Q_UNUSED(active);
 #endif

@@ -748,8 +748,13 @@ bool ImageLoader::fastScrolling() const {
 }
 
 bool ImageLoader::hasInteractiveWork() const {
+    // Visible thumbnail batches (priority >= 60) are steady background demand, not
+    // user-blocking interaction. Counting them here starved the automatic
+    // full-resolution upgrade and adjacent prefetches for as long as a large folder
+    // kept the grid busy. Match dispatch()'s cutoff that reserves a worker for
+    // priority >= 100, which is exactly the Interactive category.
     for (const auto& job : inFlight_)
-        if (job.priority >= 60 && job.activeConsumers->load() > 0) return true;
+        if (job.priority >= 100 && job.activeConsumers->load() > 0) return true;
     return false;
 }
 

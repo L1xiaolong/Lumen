@@ -276,7 +276,7 @@ class BrowseController final : public QObject {
     quint64 directoryRequestGeneration_ = 0;
     bool incrementalScan_ = false;
     quint64 galleryRequestId_ = 0;
-    int gridCellWidth_ = 160;
+    int gridCellWidth_ = 144;
     QString pendingActivationPath_;
     int displayMode_ = 0;
     QString galleryPath_;
