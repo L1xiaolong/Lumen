@@ -31,6 +31,7 @@ target_compile_definitions(mvpview_io_exiv2_adapter PRIVATE
 if(MVPVIEW_HAS_EXIV2)
     target_link_libraries(mvpview_io_exiv2_adapter PRIVATE Exiv2::exiv2lib)
 endif()
+target_link_libraries(mvpview_io_exiv2_adapter PRIVATE JpegXL::JpegXL)
 mvpview_enable_warnings(mvpview_io_exiv2_adapter)
 
 add_library(mvpview_io_lcms2_adapter STATIC
