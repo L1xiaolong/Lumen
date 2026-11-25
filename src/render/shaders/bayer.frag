@@ -109,14 +109,16 @@ void main() {
             ivec2 samplePixel = clamp(center + ivec2(dx, dy), ivec2(0), imageSize - ivec2(1));
             int channel = cfaChannel(samplePixel);
             float sampleValue = normalizedRaw(samplePixel);
-            peaks[channel] = max(peaks[channel], sampleValue);
             if (channel == 0) {
+                peaks.x = max(peaks.x, sampleValue);
                 sums.x += sampleValue;
                 counts.x += 1.0;
             } else if (channel == 1) {
+                peaks.y = max(peaks.y, sampleValue);
                 sums.y += sampleValue;
                 counts.y += 1.0;
             } else {
+                peaks.z = max(peaks.z, sampleValue);
                 sums.z += sampleValue;
                 counts.z += 1.0;
             }

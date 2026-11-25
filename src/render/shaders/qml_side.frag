@@ -158,10 +158,19 @@ vec4 sampleBayer() {
             ivec2 samplePixel = clamp(center + ivec2(dx, dy), ivec2(0), imageSize - ivec2(1));
             int channel = cfaChannel(samplePixel);
             float value = normalizedRaw(samplePixel);
-            peaks[channel] = max(peaks[channel], value);
-            if (channel == 0) { sums.x += value; counts.x += 1.0; }
-            else if (channel == 1) { sums.y += value; counts.y += 1.0; }
-            else { sums.z += value; counts.z += 1.0; }
+            if (channel == 0) {
+                peaks.x = max(peaks.x, value);
+                sums.x += value;
+                counts.x += 1.0;
+            } else if (channel == 1) {
+                peaks.y = max(peaks.y, value);
+                sums.y += value;
+                counts.y += 1.0;
+            } else {
+                peaks.z = max(peaks.z, value);
+                sums.z += value;
+                counts.z += 1.0;
+            }
         }
     }
     vec3 balanced = limitBayerHighlights(sums / max(counts, vec3(1.0)), peaks, whiteBalance.rgb);

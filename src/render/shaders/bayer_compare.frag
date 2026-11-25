@@ -160,14 +160,16 @@ vec3 primaryDisplayRgb(vec2 displayUv) {
             ivec2 pixel = clamp(center + ivec2(dx, dy), ivec2(0), size - ivec2(1));
             int channel = cfaChannel(pixel, int(round(primaryLayoutFlags.x)), radius);
             float sampleValue = primaryDisplayValue(pixel);
-            peaks[channel] = max(peaks[channel], sampleValue);
             if (channel == 0) {
+                peaks.x = max(peaks.x, sampleValue);
                 sums.x += sampleValue;
                 counts.x += 1.0;
             } else if (channel == 1) {
+                peaks.y = max(peaks.y, sampleValue);
                 sums.y += sampleValue;
                 counts.y += 1.0;
             } else {
+                peaks.z = max(peaks.z, sampleValue);
                 sums.z += sampleValue;
                 counts.z += 1.0;
             }
@@ -200,14 +202,16 @@ vec3 candidateDisplayRgb(vec2 displayUv) {
             ivec2 pixel = clamp(center + ivec2(dx, dy), ivec2(0), size - ivec2(1));
             int channel = cfaChannel(pixel, int(round(candidateLayoutFlags.x)), radius);
             float sampleValue = candidateDisplayValue(pixel);
-            peaks[channel] = max(peaks[channel], sampleValue);
             if (channel == 0) {
+                peaks.x = max(peaks.x, sampleValue);
                 sums.x += sampleValue;
                 counts.x += 1.0;
             } else if (channel == 1) {
+                peaks.y = max(peaks.y, sampleValue);
                 sums.y += sampleValue;
                 counts.y += 1.0;
             } else {
+                peaks.z = max(peaks.z, sampleValue);
                 sums.z += sampleValue;
                 counts.z += 1.0;
             }
