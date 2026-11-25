@@ -1,4 +1,5 @@
 #include "io/native_metadata.h"
+#include "io/jpeg_gain_map_metadata.h"
 
 #include <jxl/decode.h>
 
@@ -446,10 +447,16 @@ bool readJxl(QFile& file, ImageMetadata& metadata) {
 bool readNativeMetadata(const QString& path, ImageMetadata& metadata) {
     const auto suffix = QFileInfo(path).suffix().toLower();
     const bool exr = suffix == QStringLiteral("exr");
-    if (!exr && suffix != QStringLiteral("jxl")) return true;
+    const bool jpeg = suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg") ||
+                      suffix == QStringLiteral("jpe") || suffix == QStringLiteral("jfif");
+    if (!exr && !jpeg && suffix != QStringLiteral("jxl")) return true;
     QFile file(path);
     try {
         if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("Could not open image metadata");
+        if (jpeg) {
+            readJpegGainMapMetadata(file, metadata);
+            return true;
+        }
         if (!exr) return readJxl(file, metadata);
         readExr(file, metadata);
     } catch (const std::exception& error) {

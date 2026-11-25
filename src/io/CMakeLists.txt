@@ -15,6 +15,8 @@ mvpview_enable_warnings(mvpview_io_libraw_adapter)
 add_library(mvpview_io_exiv2_adapter STATIC
     metadata_exiv2_lock.h
     metadata_reader.h
+    jpeg_gain_map_metadata.cpp
+    jpeg_gain_map_metadata.h
     native_metadata.cpp
     native_metadata.h
     metadata_reader.cpp

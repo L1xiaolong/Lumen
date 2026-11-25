@@ -2900,6 +2900,90 @@ Returned to the previous folder.</source>
 <context>
         <name>ImageProperties</name>
         <message>
+            <source>HDR gain map (ISO 21496-1)</source>
+            <translation>HDR 增益图（ISO 21496-1）</translation>
+        </message>
+        <message>
+            <source>Gain map dimensions</source>
+            <translation>增益图尺寸</translation>
+        </message>
+        <message>
+            <source>Gain map JPEG components</source>
+            <translation>增益图 JPEG 分量数</translation>
+        </message>
+        <message>
+            <source>Gain map file offset</source>
+            <translation>增益图文件偏移量</translation>
+        </message>
+        <message>
+            <source>Gain map encoded size</source>
+            <translation>增益图编码大小</translation>
+        </message>
+        <message>
+            <source>Minimum reader version</source>
+            <translation>最低读取器版本</translation>
+        </message>
+        <message>
+            <source>Writer version</source>
+            <translation>写入器版本</translation>
+        </message>
+        <message>
+            <source>Gain map flags</source>
+            <translation>增益图标志位</translation>
+        </message>
+        <message>
+            <source>Gain map metadata channels</source>
+            <translation>增益图元数据通道数</translation>
+        </message>
+        <message>
+            <source>Gain map application color space</source>
+            <translation>应用增益图所用的色彩空间</translation>
+        </message>
+        <message>
+            <source>Baseline image</source>
+            <translation>基础图像</translation>
+        </message>
+        <message>
+            <source>Alternate image</source>
+            <translation>替代图像</translation>
+        </message>
+        <message>
+            <source>Baseline HDR headroom (log₂)</source>
+            <translation>基础图像 HDR 余量（log₂）</translation>
+        </message>
+        <message>
+            <source>Alternate HDR headroom (log₂)</source>
+            <translation>替代图像 HDR 余量（log₂）</translation>
+        </message>
+        <message>
+            <source>Gain map minimum (log₂)</source>
+            <translation>最小增益（log₂）</translation>
+        </message>
+        <message>
+            <source>Gain map maximum (log₂)</source>
+            <translation>最大增益（log₂）</translation>
+        </message>
+        <message>
+            <source>Gain map gamma</source>
+            <translation>增益图 Gamma</translation>
+        </message>
+        <message>
+            <source>Baseline offset</source>
+            <translation>基础图像偏移量</translation>
+        </message>
+        <message>
+            <source>Alternate offset</source>
+            <translation>替代图像偏移量</translation>
+        </message>
+        <message>
+            <source>This ISO 21496-1 gain map requires a newer metadata reader.</source>
+            <translation>此 ISO 21496-1 增益图需要更新版本的元数据读取器。</translation>
+        </message>
+        <message>
+            <source>The embedded ISO 21496-1 gain map or its metadata could not be read.</source>
+            <translation>无法读取内嵌的 ISO 21496-1 增益图或其元数据。</translation>
+        </message>
+        <message>
             <location filename="../image_properties_controller.cpp" line="61" />
             <location filename="../image_properties_controller.cpp" line="78" />
             <source>Normal</source>
