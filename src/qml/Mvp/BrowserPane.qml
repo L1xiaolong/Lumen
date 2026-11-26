@@ -17,6 +17,7 @@ Rectangle {
     property string iconPrefix: Theme.iconPrefix
     property int displayMode: controller.displayMode
     signal newFolderRequested
+    signal imageResizeRequested()
 
     color: Theme.sensorWhite
     border.width: multiplePanes ? 1 : 0
@@ -318,6 +319,7 @@ Rectangle {
                     root.activate()
                     root.controller.activatePath(path)
                 }
+                onImageResizeRequested: root.imageResizeRequested()
             }
         }
 

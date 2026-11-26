@@ -27,7 +27,6 @@ Rectangle {
     property bool canAddPane: true
     property bool gridEnabled: true
     property bool galleryEnabled: true
-    property bool transformEnabled: false
     property bool smoothDisplay: true
     property real navigationWidth: Theme.sidebarWidth
     property real captionButtonsWidth: 0
@@ -43,7 +42,6 @@ Rectangle {
     property alias galleryControl: galleryModeButton
     property alias sortControl: sortButton
     property alias compareControl: compareButton
-    property alias transformControl: transformButton
     property alias smoothDisplayControl: smoothDisplayButton
     property alias settingsControl: settingsButton
 
@@ -155,15 +153,6 @@ Rectangle {
                 checked: root.smoothDisplay
                 iconSource: root.iconPrefix + "smooth-display.svg"
                 toolTipText: qsTr("Smooth display")
-            }
-            AppIconButton {
-                id: transformButton
-                objectName: "imageOperationsButton"
-                controlSize: root.toolbarButtonSize
-                renderedIconSize: root.toolbarIconSize
-                enabled: root.transformEnabled
-                iconSource: root.iconPrefix + "image-resize.svg"
-                toolTipText: enabled ? qsTr("Image operations") : qsTr("Select one image to edit")
             }
             AppIconButton {
                 id: compareButton

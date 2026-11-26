@@ -63,6 +63,7 @@ qt_add_qml_module(LumenQml
         Mvp/ImagePropertiesContent.qml
         Mvp/ImagePropertiesPanel.qml
         Mvp/ImagePropertiesDialog.qml
+        Mvp/ImageOperationsMenu.qml
         Mvp/ImageResizeDialog.qml
         Mvp/PropertiesHistogram.qml
         Mvp/PropertyFieldList.qml

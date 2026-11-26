@@ -148,7 +148,6 @@ Rectangle {
                      root.workspaceController.paneCount <= 2
         galleryEnabled: root.workspaceController.paneCount === undefined ||
                         root.workspaceController.paneCount === 1
-        transformEnabled: root.controller.canTransform
         smoothDisplay: root.smoothDisplay
         navigationWidth: root.navigatorWidth
     }
@@ -190,29 +189,6 @@ Rectangle {
     Connections {
         target: toolbar.smoothDisplayControl
         function onClicked() { root.setSmoothDisplay(toolbar.smoothDisplayControl.checked); }
-    }
-    Connections {
-        target: toolbar.transformControl
-        function onClicked() { imageOperationsMenu.popup(toolbar.transformControl, 0, toolbar.transformControl.height); }
-    }
-    AppMenu {
-        id: imageOperationsMenu
-        objectName: "imageOperationsMenu"
-        AppMenuItem {
-            text: qsTr("Rotate 90° counterclockwise")
-            enabled: root.controller.canTransform
-            onTriggered: root.controller.rotateSelectedCounterClockwise()
-        }
-        AppMenuItem {
-            text: qsTr("Rotate 90° clockwise")
-            enabled: root.controller.canTransform
-            onTriggered: root.controller.rotateSelectedClockwise()
-        }
-        AppMenuItem {
-            text: qsTr("Resize image…")
-            enabled: root.controller.canTransform
-            onTriggered: imageResizeDialog.openForSelection()
-        }
     }
     Connections {
         target: toolbar.settingsControl
@@ -258,7 +234,11 @@ Rectangle {
     ImageResizeDialog {
         id: imageResizeDialog
         parent: Overlay.overlay
-        controller: root.controller
+    }
+
+    component WorkspaceBrowserPane: BrowserPane {
+        id: pane
+        onImageResizeRequested: imageResizeDialog.openForSelection(pane.controller)
     }
 
     Menu {
@@ -432,7 +412,7 @@ Rectangle {
 
     Component {
         id: singlePaneComponent
-        BrowserPane {
+        WorkspaceBrowserPane {
             controller: root.paneController(0)
             workspaceController: root.workspaceController
             settingsController: root.settingsController
@@ -491,7 +471,7 @@ Rectangle {
             Repeater {
                 id: paneRepeater
                 model: root.workspaceController.panes
-                delegate: BrowserPane {
+                delegate: WorkspaceBrowserPane {
                     required property var modelData
                     required property int index
                     controller: modelData || root.controller
@@ -589,7 +569,7 @@ Rectangle {
                     }
                     Rectangle { anchors.centerIn: parent; width: 1; height: parent.height; color: SplitHandle.pressed || SplitHandle.hovered ? Theme.primaryButton : Theme.opticalGray }
                 }
-                BrowserPane {
+                WorkspaceBrowserPane {
                     id: topLeft
                     controller: root.paneController(0)
                     workspaceController: root.workspaceController
@@ -602,7 +582,7 @@ Rectangle {
                     SplitView.preferredWidth: (topRow.width - 7) / 2
                     onNewFolderRequested: newFolderDialog.open()
                 }
-                BrowserPane {
+                WorkspaceBrowserPane {
                     id: topRight
                     controller: root.paneController(1)
                     workspaceController: root.workspaceController
@@ -653,7 +633,7 @@ Rectangle {
                     }
                     Rectangle { anchors.centerIn: parent; width: 1; height: parent.height; color: SplitHandle.pressed || SplitHandle.hovered ? Theme.primaryButton : Theme.opticalGray }
                 }
-                BrowserPane {
+                WorkspaceBrowserPane {
                     id: bottomLeft
                     controller: root.paneController(2)
                     workspaceController: root.workspaceController
@@ -666,7 +646,7 @@ Rectangle {
                     SplitView.preferredWidth: (bottomRow.width - 7) / 2
                     onNewFolderRequested: newFolderDialog.open()
                 }
-                BrowserPane {
+                WorkspaceBrowserPane {
                     id: bottomRight
                     controller: root.paneController(3)
                     workspaceController: root.workspaceController
@@ -1495,6 +1475,10 @@ Rectangle {
             enabled: root.workspaceController.canCompare
             onTriggered: root.workspaceController.compareSelected()
         }
+        ImageOperationsMenu {
+            controller: root.controller
+            onResizeRequested: imageResizeDialog.openForSelection(root.controller)
+        }
         AppMenuItem {
             visible: root.controller.canRestoreSelected
             text: qsTr("Restore original")
@@ -1540,6 +1524,10 @@ Rectangle {
         AppMenuItem { text: qsTr("Open full screen"); onTriggered: root.controller.activatePath(galleryWorkspace.contextPath) }
         AppMenuItem { text: qsTr("Compare selected"); enabled: root.workspaceController.canCompare; onTriggered: root.workspaceController.compareSelected() }
         AppMenuItem { text: qsTr("RAW/YUV parameters…"); enabled: root.controller.canEditRaw; onTriggered: root.controller.editSelectedRawParameters() }
+        ImageOperationsMenu {
+            controller: root.controller
+            onResizeRequested: imageResizeDialog.openForSelection(root.controller)
+        }
         AppMenuItem { visible: root.controller.canRestoreSelected; text: qsTr("Restore original"); onTriggered: root.controller.restoreSelected() }
         AppMenuSeparator {}
         AppMenuItem { text: qsTr("Cut"); shortcutText: Qt.platform.os === "osx" ? "⌘X" : "Ctrl+X"; onTriggered: root.controller.copySelected(true) }

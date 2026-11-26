@@ -433,18 +433,6 @@
         <translation>将 %1 个项目复制到“%2”？</translation>
     </message>
     <message>
-        <source>Rotate 90° counterclockwise</source>
-        <translation>逆时针旋转 90°</translation>
-    </message>
-    <message>
-        <source>Rotate 90° clockwise</source>
-        <translation>顺时针旋转 90°</translation>
-    </message>
-    <message>
-        <source>Resize image…</source>
-        <translation>调整图片大小…</translation>
-    </message>
-    <message>
         <source>100% (1:1)</source>
         <translation>100%（1:1）</translation>
     </message>
@@ -1278,6 +1266,25 @@ Choose another folder or drop images here</source>
         <location filename="../Mvp/ImagePropertiesDialog.qml" line="167"/>
         <source>Reading full-resolution metadata…</source>
         <translation>正在读取全分辨率元数据…</translation>
+    </message>
+</context>
+<context>
+    <name>ImageOperationsMenu</name>
+    <message>
+        <source>Image operations</source>
+        <translation>图像操作</translation>
+    </message>
+    <message>
+        <source>Rotate 90° counterclockwise</source>
+        <translation>逆时针旋转 90°</translation>
+    </message>
+    <message>
+        <source>Rotate 90° clockwise</source>
+        <translation>顺时针旋转 90°</translation>
+    </message>
+    <message>
+        <source>Resize image…</source>
+        <translation>调整图片大小…</translation>
     </message>
 </context>
 <context>
@@ -2770,14 +2777,6 @@ Choose another folder or drop images here</source>
     <message>
         <source>Select 2–4 images to compare</source>
         <translation>选择 2～4 张图片进行对比</translation>
-    </message>
-    <message>
-        <source>Image operations</source>
-        <translation>图像操作</translation>
-    </message>
-    <message>
-        <source>Select one image to edit</source>
-        <translation>选择一张图片进行编辑</translation>
     </message>
     <message>
         <source>Clear search</source>

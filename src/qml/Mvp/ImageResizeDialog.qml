@@ -36,7 +36,8 @@ Dialog {
     padding: 0
     closePolicy: awaitingResize ? Popup.NoAutoClose : Popup.CloseOnEscape
 
-    function openForSelection() {
+    function openForSelection(sourceController) {
+        controller = sourceController
         const size = controller ? controller.selectedImageSize : Qt.size(0, 0)
         sourceWidth = Number(size.width || 0)
         sourceHeight = Number(size.height || 0)

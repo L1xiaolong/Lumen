@@ -45,6 +45,7 @@ Item {
     readonly property bool pathHoverActive: tileMouse.containsMouse
     signal activated
     signal selectionRequested(bool extend, bool toggle)
+    signal imageResizeRequested()
 
     component MetadataStrip: Item {
         id: metadataStrip
@@ -478,6 +479,10 @@ Item {
                 enabled: root.workspaceController.canCompare
                 onTriggered: root.workspaceController.compareSelected()
             }
+            ImageOperationsMenu {
+                controller: root.controller
+                onResizeRequested: root.imageResizeRequested()
+            }
             AppMenuItem {
                 visible: root.controller.canRestoreSelected
                 text: qsTr("Restore original")
@@ -534,6 +539,10 @@ Item {
                 text: qsTr("RAW/YUV parameters…")
                 enabled: root.controller.canEditRaw
                 onTriggered: root.controller.editSelectedRawParameters()
+            }
+            ImageOperationsMenu {
+                controller: root.controller
+                onResizeRequested: root.imageResizeRequested()
             }
             AppMenuItem {
                 visible: root.controller.canRestoreSelected
