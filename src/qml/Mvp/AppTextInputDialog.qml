@@ -9,6 +9,7 @@ Dialog {
     property string description: qsTr("")
     property string initialText: ""
     property string acceptText: qsTr("Save")
+    property bool selectFileBaseName: false
     readonly property alias inputText: inputField.text
 
     signal submitted(string text)
@@ -44,7 +45,11 @@ Dialog {
         inputField.text = initialText
         errorLabel.text = ""
         inputField.forceActiveFocus()
-        inputField.selectAll()
+        const suffixStart = initialText.lastIndexOf(".")
+        if (selectFileBaseName && suffixStart > 0 && suffixStart < initialText.length - 1)
+            inputField.select(0, suffixStart)
+        else
+            inputField.selectAll()
     }
 
     Overlay.modal: Rectangle {

@@ -43,6 +43,29 @@ void setError(QString* destination, const QString& message) {
 
 } // namespace
 
+QString SingleFileRename::resolveName(const QFileInfo& source, const QString& requestedName,
+                                       QString& error) {
+    QString name = requestedName.trimmed();
+    if (name.isEmpty()) {
+        error = QCoreApplication::translate("FileOperations", "Enter a name.");
+        return {};
+    }
+    if (name.contains(QLatin1Char('/')) || name.contains(QLatin1Char('\\')) ||
+        name == QStringLiteral(".") || name == QStringLiteral("..")) {
+        error = QCoreApplication::translate("FileOperations", "The name contains unsupported characters. Use another name and try again.");
+        return {};
+    }
+
+    const QString suffix = source.suffix();
+    if (source.isFile() && !suffix.isEmpty() &&
+        source.fileName().lastIndexOf(QLatin1Char('.')) > 0 &&
+        name.lastIndexOf(QLatin1Char('.')) <= 0) {
+        name += QLatin1Char('.') + suffix;
+    }
+    error.clear();
+    return name;
+}
+
 bool SingleFileRename::execute(const QString& sourcePath, const QString& destinationPath,
                                QString* error) {
     const QFileInfo source(sourcePath);

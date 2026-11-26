@@ -205,7 +205,7 @@ class BrowseController final : public QObject {
     void propertiesRequested(const QString& path);
     void rawParametersRequested(const QString& path);
     void directorySelectionRequested(const QUrl& initialFolder);
-    void renameRequested(const QString& currentName);
+    void renameRequested(const QString& currentName, bool isFile);
     void trashConfirmationRequested(int itemCount);
     void transferConfirmationRequested(bool move, int itemCount,
                                        const QString& targetDirectory);

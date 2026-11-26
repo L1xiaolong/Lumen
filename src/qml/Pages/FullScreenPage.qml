@@ -432,6 +432,7 @@ Item {
         dialogTitle: qsTr("Rename image")
         description: qsTr("Enter a new name for the current image")
         acceptText: qsTr("Rename")
+        selectFileBaseName: true
         onSubmitted: function(text) { complete(root.controller.renameCurrentTo(text)) }
     }
 

@@ -1115,22 +1115,19 @@ void BrowseController::openDroppedUrls(const QList<QUrl>& urls) {
 
 void BrowseController::renameSelected() {
     if (selectedPaths_.size() != 1) return;
-    emit renameRequested(QFileInfo(selectedPaths_.first()).fileName());
+    const QFileInfo source(selectedPaths_.first());
+    emit renameRequested(source.fileName(), source.isFile());
 }
 
 QString BrowseController::renameSelectedTo(const QString& requestedName) {
     if (conflictsWithTransform(selectedPaths_)) return transformInProgress();
     if (selectedPaths_.size() != 1) return QCoreApplication::translate("FileOperations", "Select one item to rename.");
     const QFileInfo source(selectedPaths_.first());
-    const QString newName = requestedName.trimmed();
-    if (newName.isEmpty()) return QCoreApplication::translate("FileOperations", "Enter a name.");
-    if (newName.contains(QLatin1Char('/')) || newName.contains(QLatin1Char('\\')) ||
-        newName == QStringLiteral(".") || newName == QStringLiteral("..")) {
-        return QCoreApplication::translate("FileOperations", "The name contains unsupported characters. Use another name and try again.");
-    }
+    QString error;
+    const QString newName = SingleFileRename::resolveName(source, requestedName, error);
+    if (newName.isEmpty()) return error;
     if (newName == source.fileName()) return {};
     const QString destination = source.dir().filePath(newName);
-    QString error;
     const QString operation = diagnostics::operationId();
     const QJsonObject context{{"operation", operation}, {"file", diagnostics::fileId(source.absoluteFilePath())}};
     diagnostics::event(diagnostics::Level::Info, diagnostics::files(), QStringLiteral("rename.begin"), context, true);

@@ -1752,7 +1752,8 @@ Rectangle {
             folderPicker.open()
         }
 
-        function onRenameRequested(currentName) {
+        function onRenameRequested(currentName, isFile) {
+            renameDialog.selectFileBaseName = isFile
             renameDialog.openWith(currentName)
         }
 
