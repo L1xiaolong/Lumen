@@ -121,7 +121,7 @@ QString CompareController::fileText(int slot) const {
                                    : QStringLiteral("—*—");
     const qint64 fileSize = value->metadata.fileSize;
     const QString sizeText = fileSize > 0 ? compactDataSize(fileSize) : QStringLiteral("—");
-    return QStringLiteral("%1,%2,%3").arg(fileName, resolution, sizeText);
+    return QStringLiteral("%1, %2, %3").arg(fileName, resolution, sizeText);
 }
 
 QString CompareController::cameraText(int slot) const {
@@ -138,7 +138,9 @@ QString CompareController::cameraText(int slot) const {
     if (camera.aperture > 0.0) parts.append(QStringLiteral("f/%1").arg(camera.aperture, 0, 'g', 3));
     if (camera.iso > 0) parts.append(QStringLiteral("ISO %1").arg(camera.iso));
     if (camera.focalLengthMm > 0.0) parts.append(QStringLiteral("%1 mm").arg(camera.focalLengthMm, 0, 'g', 4));
-    return parts.isEmpty() ? QCoreApplication::translate("ImageProperties", "No EXIF camera data") : parts.join(QStringLiteral("  •  "));
+    return parts.isEmpty()
+        ? QCoreApplication::translate("ImageProperties", "No EXIF camera data")
+        : parts.join(QStringLiteral(", "));
 }
 
 void CompareController::setPaths(const QStringList& requested) {

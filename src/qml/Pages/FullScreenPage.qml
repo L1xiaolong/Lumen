@@ -214,18 +214,14 @@ Item {
         height: imageName.implicitHeight
         z: 25
 
-        Text {
+        ImageReadout {
             id: imageName
             objectName: "fullScreenImageInfoText"
             anchors.left: parent.left
             anchors.right: parent.right
-            text: root.controller.fileName + "," + root.resolutionText + "," +
-                  root.controller.fileSizeText + "," + root.zoomText
-            color: "#00FF00"
+            text: [root.controller.fileName, root.resolutionText,
+                   root.controller.fileSizeText, root.zoomText].join(", ")
             elide: Text.ElideRight
-            font.family: Theme.monoFont
-            font.pixelSize: 12
-            font.weight: Font.Bold
         }
     }
 
@@ -240,15 +236,13 @@ Item {
         height: pixelLabel.implicitHeight
         z: 25
 
-        Text {
+        ImageReadout {
             id: pixelLabel
             objectName: "fullScreenPixelInfoText"
             anchors.centerIn: parent
             text: root.panoramaActive
                   ? ((root.panoramaCanvas && root.panoramaCanvas.pixelReadout) || qsTr("Move over the image"))
                   : root.pixelText
-            color: "#00FF00"
-            font.family: Theme.monoFont
             font.pixelSize: 11
         }
     }

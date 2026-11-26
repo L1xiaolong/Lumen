@@ -15,6 +15,7 @@ ImagePropertiesContent 1.0 ImagePropertiesContent.qml
 ImagePropertiesPanel 1.0 ImagePropertiesPanel.qml
 ImagePropertiesDialog 1.0 ImagePropertiesDialog.qml
 ImageOperationsMenu 1.0 ImageOperationsMenu.qml
+ImageReadout 1.0 ImageReadout.qml
 PropertiesHistogram 1.0 PropertiesHistogram.qml
 PropertyFieldList 1.0 PropertyFieldList.qml
 RawNumberField 1.0 RawNumberField.qml

@@ -97,7 +97,7 @@ Item {
     function comparisonFileText(slot, navigationData) {
         const currentRevision = root.controller.revision
         const fileText = root.controller.fileText(slot) || qsTr("Loading…")
-        return fileText + "," + (navigationData.zoom || "—%")
+        return fileText + ", " + (navigationData.zoom || "—%")
     }
 
     function comparisonExifText(slot) {
@@ -550,17 +550,13 @@ Item {
                     width: Math.max(0, comparisonCell.width - 16)
                     height: fileInformation.implicitHeight
 
-                    Text {
+                    ImageReadout {
                         id: fileInformation
                         objectName: "compareFileInformation_" + comparisonCell.index
                         anchors.left: parent.left
                         anchors.right: parent.right
                         text: root.comparisonFileText(comparisonCell.index,
                                                       comparisonCell.navigationData)
-                        color: "#00FF00"
-                        font.family: Theme.monoFont
-                        font.pixelSize: 12
-                        font.weight: Font.Bold
                         elide: Text.ElideRight
                     }
                 }
@@ -570,16 +566,12 @@ Item {
                     width: Math.max(0, comparisonCell.width - 16)
                     height: exifInformation.implicitHeight
 
-                    Text {
+                    ImageReadout {
                         id: exifInformation
                         objectName: "compareExifInformation_" + comparisonCell.index
                         anchors.left: parent.left
                         anchors.right: parent.right
                         text: root.comparisonExifText(comparisonCell.index)
-                        color: "#00FF00"
-                        font.family: Theme.monoFont
-                        font.pixelSize: 12
-                        font.weight: Font.Bold
                         elide: Text.ElideRight
                     }
                 }
@@ -612,16 +604,12 @@ Item {
                 width: Math.min(parent.width - 16, pixelValue.implicitWidth)
                 height: pixelValue.implicitHeight
 
-                Text {
+                ImageReadout {
                     id: pixelValue
                     objectName: "comparePixelValue_" + comparisonCell.index
                     anchors.left: parent.left
                     anchors.right: parent.right
                     text: root.pixelValues[comparisonCell.index] || ""
-                    color: "#00FF00"
-                    font.pixelSize: 12
-                    font.weight: Font.Bold
-                    font.family: Theme.monoFont
                     elide: Text.ElideRight
                 }
             }
