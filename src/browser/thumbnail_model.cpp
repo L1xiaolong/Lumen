@@ -2,7 +2,9 @@
 
 #include "io/image_loader.h"
 #include "io/panorama_source.h"
+#include "io/raw_preset_store.h"
 
+#include <QCoreApplication>
 #include <QFileInfo>
 #include <QIcon>
 #include <QLocale>
@@ -61,18 +63,44 @@ ThumbnailModel::ThumbnailModel(ImageLoader* loader, QObject* parent)
         if (!files_.isEmpty())
             emit dataChanged(index(0), index(rowCount() - 1), {ThumbnailUrlRole});
     });
+    connect(loader_, &ImageLoader::rawParametersRequired, this, [this](const QString& path) {
+        const int row = pathToRow_.value(path, -1);
+        if (row < 0 || rawParametersRequired_.contains(path)) return;
+        rawParametersRequired_.insert(path);
+        dimensions_.remove(path);
+        bitDepths_.remove(path);
+        emit dataChanged(index(row), index(row),
+                         {DimensionsRole, BitDepthRole, TechnicalLabelRole, RawParametersRequiredRole});
+    });
+    connect(loader_, &ImageLoader::rawPresetsChanged, this, [this] {
+        rawParametersRequired_.clear();
+        for (const auto& file : files_) {
+            if (!file.isDirectory && RawPresetStore::isHeaderlessImage(file.path) &&
+                !loader_->rawParameters(file.path)) {
+                dimensions_.remove(file.path);
+                bitDepths_.remove(file.path);
+            }
+        }
+        if (!files_.isEmpty())
+            emit dataChanged(index(0), index(rowCount() - 1),
+                             {DimensionsRole, BitDepthRole, TechnicalLabelRole,
+                              RawParametersRequiredRole, ThumbnailUrlRole});
+    });
     connect(loader_, &ImageLoader::thumbnailMetadataReady, this,
             [this](const QString& path, const QSize& sourceSize, int validBits) {
                 const int row = pathToRow_.value(path, -1);
-                if (row < 0 || (dimensions_.value(path) == sourceSize &&
-                                bitDepths_.value(path) == validBits)) {
+                if (row < 0) return;
+                const bool clearedHint = rawParametersRequired_.remove(path);
+                if (!clearedHint && dimensions_.value(path) == sourceSize &&
+                    bitDepths_.value(path) == validBits) {
                     return;
                 }
                 dimensions_.insert(path, sourceSize);
                 bitDepths_.insert(path, validBits);
                 const QModelIndex changed = index(row);
                 emit dataChanged(changed, changed,
-                                 {DimensionsRole, BitDepthRole, TechnicalLabelRole, PanoramaCandidateRole});
+                                 {DimensionsRole, BitDepthRole, TechnicalLabelRole,
+                                  PanoramaCandidateRole, RawParametersRequiredRole});
             });
 }
 
@@ -122,6 +150,8 @@ QVariant ThumbnailModel::data(const QModelIndex& index, int role) const {
                isPanoramaJpeg(file.path);
     case BitDepthRole:
         return bitDepths_.value(file.path);
+    case RawParametersRequiredRole:
+        return rawParametersRequired_.contains(file.path);
     case FileSizeTextRole:
         return file.isDirectory ? QString{} : formattedFileSize(file.fileSize);
     case ThumbnailUrlRole: {
@@ -133,6 +163,8 @@ QVariant ThumbnailModel::data(const QModelIndex& index, int role) const {
                                .arg(file.modifiedAt.toMSecsSinceEpoch());
         const QString processingRevision = loader_->rawParametersRevision(file.path);
         if (!processingRevision.isEmpty()) revision += QLatin1Char('-') + processingRevision;
+        if (RawPresetStore::isHeaderlessImage(file.path) && processingRevision.isEmpty())
+            revision += QStringLiteral("-raw%1").arg(loader_->rawPresetRevision());
         revision += QLatin1Char('-') + loader_->displayRevision();
         return QStringLiteral("image://thumbnail/%1?v=%2")
             .arg(QString::fromLatin1(QUrl::toPercentEncoding(file.path)),
@@ -144,6 +176,8 @@ QVariant ThumbnailModel::data(const QModelIndex& index, int role) const {
         if (file.isDirectory) {
             return QStringLiteral("Folder");
         }
+        if (rawParametersRequired_.contains(file.path))
+            return QCoreApplication::translate("RawParameters", "Set image parameters");
         const QSize dimensions = dimensions_.value(file.path);
         const QString dimensionText =
             dimensions.isValid()
@@ -180,6 +214,7 @@ QHash<int, QByteArray> ThumbnailModel::roleNames() const {
     roles.insert(ThumbnailUrlRole, "thumbnailUrl");
     roles.insert(FileNameRole, "fileName");
     roles.insert(TechnicalLabelRole, "technicalLabel");
+    roles.insert(RawParametersRequiredRole, "rawParametersRequired");
     roles.insert(SelectedRole, "isSelected");
     roles.insert(SelectionOrdinalRole, "selectionOrdinal");
     roles.insert(PanoramaCandidateRole, "panoramaCandidate");
@@ -256,6 +291,7 @@ void ThumbnailModel::setFiles(QVector<ImageFileRecord> files) {
     files_ = std::move(files);
     dimensions_.clear();
     bitDepths_.clear();
+    rawParametersRequired_.clear();
     rebuildPathIndex();
     endResetModel();
 }
@@ -315,20 +351,25 @@ void ThumbnailModel::updateFiles(const QVector<ImageFileRecord>& files) {
         shiftedRecords > qint64(referenceCount) * 4) {
         QHash<QString, QSize> retainedDimensions;
         QHash<QString, int> retainedBitDepths;
+        QSet<QString> retainedParameterHints;
         for (const auto& incoming : files) {
             const int oldRow = pathToRow_.value(incoming.path, -1);
             if (oldRow < 0) continue;
             const auto& old = files_.at(oldRow);
-            if (old.fileSize == incoming.fileSize && old.modifiedAt == incoming.modifiedAt &&
-                dimensions_.contains(incoming.path)) {
-                retainedDimensions.insert(incoming.path, dimensions_.value(incoming.path));
-                retainedBitDepths.insert(incoming.path, bitDepths_.value(incoming.path));
+            if (old.fileSize == incoming.fileSize && old.modifiedAt == incoming.modifiedAt) {
+                if (dimensions_.contains(incoming.path)) {
+                    retainedDimensions.insert(incoming.path, dimensions_.value(incoming.path));
+                    retainedBitDepths.insert(incoming.path, bitDepths_.value(incoming.path));
+                }
+                if (rawParametersRequired_.contains(incoming.path))
+                    retainedParameterHints.insert(incoming.path);
             }
         }
         beginResetModel();
         files_ = files;
         dimensions_ = std::move(retainedDimensions);
         bitDepths_ = std::move(retainedBitDepths);
+        rawParametersRequired_ = std::move(retainedParameterHints);
         rebuildPathIndex();
         endResetModel();
         return;
@@ -341,6 +382,7 @@ void ThumbnailModel::updateFiles(const QVector<ImageFileRecord>& files) {
             const QString& path = files_.at(row).path;
             dimensions_.remove(path);
             bitDepths_.remove(path);
+            rawParametersRequired_.remove(path);
         }
         files_.remove(range.first, range.second - range.first + 1);
         endRemoveRows();
@@ -357,6 +399,7 @@ void ThumbnailModel::updateFiles(const QVector<ImageFileRecord>& files) {
             if (contentChanged) {
                 dimensions_.remove(incoming.path);
                 bitDepths_.remove(incoming.path);
+                rawParametersRequired_.remove(incoming.path);
             }
             const QModelIndex changed = index(row);
             emit dataChanged(changed, changed);
@@ -376,6 +419,7 @@ QString ThumbnailModel::pathAt(int row) const {
 }
 
 void ThumbnailModel::invalidateThumbnail(const QString& path) {
+    rawParametersRequired_.remove(path);
     // RAW parameter changes invalidate pixels, but their dimensions and bit depth are already
     // known synchronously. Keeping these roles populated also covers a thumbnail request that
     // immediately hits an earlier demosaic configuration in the memory cache.
@@ -391,7 +435,7 @@ void ThumbnailModel::invalidateThumbnail(const QString& path) {
         const QModelIndex changed = index(row);
         emit dataChanged(changed, changed,
                          {Qt::DecorationRole, DimensionsRole, BitDepthRole, ThumbnailUrlRole,
-                          TechnicalLabelRole});
+                          TechnicalLabelRole, RawParametersRequiredRole});
     }
 }
 

@@ -88,6 +88,7 @@ void RawParametersController::loadPath(const QString& requestedPath) {
     if (requestedPath.isEmpty()) { clear(); return; }
     path_ = QFileInfo(requestedPath).absoluteFilePath();
     std::optional<RawImageParameters> value = loader_->rawParameters(path_);
+    if (!value) value = RawPresetStore::resolveForFile(QFileInfo(path_));
     if (!value) value = RawPresetStore::loadForFile(path_);
     if (!value) value = RawPresetStore::inferFromFileName(path_);
     setParameters(value.value_or(RawImageParameters{}));
@@ -146,6 +147,7 @@ QString RawParametersController::savePreset(const QString& requestedName,
     if (name.isEmpty()) return tr("Enter a preset name.");
     if (!RawPresetStore::saveNamedPreset(name, parameters()))
         return tr("The parameters are incomplete or invalid. Check them and try again.");
+    loader_->invalidateRawPresets();
     refreshPresets();
     selectedPreset_ = name;
     emit stateChanged();
@@ -162,6 +164,7 @@ QString RawParametersController::deleteSelectedPreset() {
     const QString name = selectedPreset_;
     if (!RawPresetStore::removeNamedPreset(name))
         return tr("Unable to delete preset: %1. Try again.").arg(name);
+    loader_->invalidateRawPresets();
     selectedPreset_.clear();
     refreshPresets();
     emit stateChanged();

@@ -11,6 +11,7 @@
 #include <QSettings>
 #include <QVariantMap>
 
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <limits>
@@ -167,6 +168,19 @@ bool applyCapturedInteger(const QRegularExpressionMatch& match, const QString& c
     return true;
 }
 
+bool containsFrame(qint64 fileSize, const RawImageParameters& parameters) {
+    return parameters.frameIndex < availableFrameCount(fileSize, parameters);
+}
+
+std::optional<RawImageParameters> uniqueMatch(const QVector<RawImageParameters>& matches) {
+    if (matches.isEmpty()) return std::nullopt;
+    const QString firstKey = matches.first().cacheKey();
+    for (const auto& match : matches) {
+        if (match.cacheKey() != firstKey) return std::nullopt;
+    }
+    return matches.first();
+}
+
 } // namespace
 
 std::optional<RawImageParameters> RawPresetStore::loadForFile(const QString& path) {
@@ -216,18 +230,22 @@ QString RawPresetStore::sidecarPath(const QString& path) {
     return path + QStringLiteral(".mvpview.json");
 }
 
-RawImageParameters RawPresetStore::inferFromFileName(const QString& path) {
-    const QString fileName = QFileInfo(path).fileName();
-    for (const RawFilenameRule& rule : filenameRules()) {
+namespace {
+
+std::optional<RawImageParameters> matchFilenameRule(const QFileInfo& file,
+                                                   const QVariantMap& presets) {
+    const QString fileName = file.fileName();
+    for (const RawFilenameRule& rule : RawPresetStore::filenameRules()) {
         if (!rule.enabled) {
             continue;
         }
         const QRegularExpression expression(QRegularExpression::anchoredPattern(rule.pattern));
         const auto match = expression.match(fileName);
-        const auto preset = loadNamedPreset(rule.presetName);
-        if (!expression.isValid() || !match.hasMatch() || !preset) {
+        if (!expression.isValid() || !match.hasMatch()) {
             continue;
         }
+        const auto preset = fromMap(presets.value(rule.presetName).toMap());
+        if (!preset) continue;
         RawImageParameters result = *preset;
         const bool capturesValid =
             applyCapturedInteger(
@@ -251,20 +269,34 @@ RawImageParameters RawPresetStore::inferFromFileName(const QString& path) {
             applyCapturedInteger(
                 match, QStringLiteral("valid_bits"), 0, 16,
                 [&result](qint64 value) { result.validBitsOverride = static_cast<int>(value); });
-        if (capturesValid && parametersAreValid(result)) {
+        if (capturesValid && parametersAreValid(result) && containsFrame(file.size(), result)) {
             return result;
         }
     }
+    return std::nullopt;
+}
 
-    const QString name = QFileInfo(path).completeBaseName().toLower();
-    RawImageParameters result;
-    const QRegularExpression sizeExpression(QStringLiteral(R"((\d{2,6})[x_](\d{2,6}))"));
-    auto matches = sizeExpression.globalMatch(name);
+struct FilenameHints {
+    RawImageParameters parameters;
+    bool formatSpecified = true;
+    bool patternSpecified = true;
+};
+
+FilenameHints filenameHints(const QFileInfo& file) {
+    const QString name = file.completeBaseName().toLower();
+    FilenameHints hints;
+    auto& result = hints.parameters;
+    static const QRegularExpression explicitSize(QStringLiteral(R"((?<!\d)(\d{1,6})[x×](\d{1,6})(?!\d))"));
+    static const QRegularExpression underscoreSize(QStringLiteral(R"((?<!\d)(\d{2,6})_(\d{2,6})(?!\d))"));
+    auto matches = explicitSize.globalMatch(name);
+    if (!matches.hasNext()) matches = underscoreSize.globalMatch(name);
     while (matches.hasNext()) {
         const auto match = matches.next();
         result.size = {match.captured(1).toInt(), match.captured(2).toInt()};
     }
-    if (name.contains(QStringLiteral("nv21"))) {
+    if (name.contains(QStringLiteral("nv12"))) {
+        result.format = RawPixelFormat::NV12;
+    } else if (name.contains(QStringLiteral("nv21"))) {
         result.format = RawPixelFormat::NV21;
     } else if (name.contains(QStringLiteral("i420")) || name.contains(QStringLiteral("yuv420p"))) {
         result.format = RawPixelFormat::I420;
@@ -280,17 +312,21 @@ RawImageParameters RawPresetStore::inferFromFileName(const QString& path) {
         result.format = RawPixelFormat::MipiRaw12;
     } else if (name.contains(QStringLiteral("raw16"))) {
         result.format = RawPixelFormat::Raw16;
+    } else {
+        hints.formatSpecified = false;
+        result.format = file.suffix().compare(QStringLiteral("raw"), Qt::CaseInsensitive) == 0
+            ? RawPixelFormat::Raw16 : RawPixelFormat::NV12;
     }
     // Names such as "raw_8000_6000_10bits.raw" describe unpacked samples in a
     // 16-bit container, not MIPI RAW10 packing. Explicit raw10/raw12 markers above
     // keep their packed interpretation.
-    if (!name.contains(QStringLiteral("raw10")) &&
-        !name.contains(QStringLiteral("raw12"))) {
+    if (result.format == RawPixelFormat::Raw16) {
         for (int bits : {10, 12, 14, 16}) {
             if (name.contains(QStringLiteral("%1bits").arg(bits)) ||
                 name.contains(QStringLiteral("%1bit").arg(bits))) {
                 result.format = RawPixelFormat::Raw16;
                 result.validBitsOverride = bits;
+                hints.formatSpecified = true;
                 break;
             }
         }
@@ -301,6 +337,8 @@ RawImageParameters RawPresetStore::inferFromFileName(const QString& path) {
         result.bayerPattern = BayerPattern::GBRG;
     } else if (name.contains(QStringLiteral("grbg"))) {
         result.bayerPattern = BayerPattern::GRBG;
+    } else {
+        hints.patternSpecified = name.contains(QStringLiteral("rggb"));
     }
     if (name.contains(QStringLiteral("quadbayer")) ||
         name.contains(QStringLiteral("quad_bayer")) ||
@@ -308,7 +346,89 @@ RawImageParameters RawPresetStore::inferFromFileName(const QString& path) {
         name.contains(QStringLiteral("4x4_bin"))) {
         result.bayerSampling = BayerSampling::QuadBayer4x4;
     }
-    return result;
+    return hints;
+}
+
+bool matchesHints(const RawImageParameters& parameters, const FilenameHints& hints) {
+    const auto& expected = hints.parameters;
+    return parameters.isYuv() == expected.isYuv() &&
+           (!hints.formatSpecified || parameters.format == expected.format) &&
+           (expected.size.isEmpty() || parameters.size == expected.size) &&
+           (expected.validBitsOverride == 0 || parameters.validBits() == expected.validBits()) &&
+           (!hints.patternSpecified || parameters.bayerPattern == expected.bayerPattern) &&
+           (expected.bayerSampling != BayerSampling::QuadBayer4x4 ||
+            parameters.bayerSampling == expected.bayerSampling);
+}
+
+} // namespace
+
+bool RawPresetStore::isHeaderlessImage(const QString& path) {
+    return path.endsWith(QStringLiteral(".raw"), Qt::CaseInsensitive) ||
+           path.endsWith(QStringLiteral(".yuv"), Qt::CaseInsensitive);
+}
+
+std::optional<RawImageParameters> RawPresetStore::resolveForFile(const QFileInfo& file) {
+    const QString path = file.filePath();
+    if (!isHeaderlessImage(path) || file.size() <= 0) return std::nullopt;
+    if (const auto saved = loadForFile(path))
+        return containsFrame(file.size(), *saved) ? saved : std::nullopt;
+
+    const QVariantMap presets = namedPresetMap();
+    if (const auto rule = matchFilenameRule(file, presets)) return rule;
+
+    const auto hints = filenameHints(file);
+    QVector<RawImageParameters> matchingPresets;
+    for (const auto& preset : presets) {
+        const auto parameters = fromMap(preset.toMap());
+        if (!parameters || !matchesHints(*parameters, hints) || !containsFrame(file.size(), *parameters))
+            continue;
+        const qint64 payload = file.size() - parameters->headerOffset;
+        const qsizetype frameBytes = frameByteSize(*parameters);
+        if (payload == frameBytes ||
+            (!hints.parameters.size.isEmpty() && payload > frameBytes && payload % frameBytes == 0)) {
+            matchingPresets.append(*parameters);
+        }
+    }
+    if (!matchingPresets.isEmpty()) return uniqueMatch(matchingPresets);
+
+    // These are storage dimensions. A bare byte count cannot tell us the orientation
+    // or chroma order, so generic 8-bit .yuv keeps the existing NV12 default.
+    static constexpr std::array commonSizes{
+        QSize(320, 240), QSize(640, 480), QSize(720, 480), QSize(720, 576),
+        QSize(800, 600), QSize(1024, 768), QSize(1280, 720), QSize(1280, 960),
+        QSize(1600, 1200), QSize(1920, 1080), QSize(2048, 1536), QSize(2560, 1440),
+        QSize(3840, 2160), QSize(4096, 2160), QSize(4000, 3000), QSize(8000, 6000),
+    };
+    const bool sizeSpecified = !hints.parameters.size.isEmpty();
+    QVector<RawImageParameters> singleFrame;
+    QVector<RawImageParameters> multipleFrames;
+    const auto considerSize = [&](QSize size) {
+        for (const auto format : {RawPixelFormat::NV12, RawPixelFormat::NV21, RawPixelFormat::I420,
+                                  RawPixelFormat::P010, RawPixelFormat::MipiRaw10,
+                                  RawPixelFormat::MipiRaw12, RawPixelFormat::Raw16}) {
+            if (!hints.formatSpecified && (format == RawPixelFormat::NV21 || format == RawPixelFormat::I420))
+                continue;
+            RawImageParameters candidate = hints.parameters;
+            candidate.size = size;
+            candidate.format = format;
+            candidate.msbAligned = format == RawPixelFormat::P010;
+            if (!matchesHints(candidate, hints) || !parametersAreValid(candidate)) continue;
+            const qsizetype frameBytes = frameByteSize(candidate);
+            if (file.size() == frameBytes)
+                singleFrame.append(candidate);
+            else if (sizeSpecified && file.size() > frameBytes && file.size() % frameBytes == 0)
+                multipleFrames.append(candidate);
+        }
+    };
+    if (sizeSpecified)
+        considerSize(hints.parameters.size);
+    else
+        for (const QSize size : commonSizes) considerSize(size);
+    return uniqueMatch(singleFrame.isEmpty() ? multipleFrames : singleFrame);
+}
+
+RawImageParameters RawPresetStore::inferFromFileName(const QString& path) {
+    return filenameHints(QFileInfo(path)).parameters;
 }
 
 QStringList RawPresetStore::namedPresetNames() {

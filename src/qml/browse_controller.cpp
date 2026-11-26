@@ -400,11 +400,17 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
     });
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this,
             &BrowseController::clipboardStateChanged);
-    connect(loader_, &ImageLoader::rawParametersChanged, this, [this](const QString& path) {
-        if (galleryPath_ != path) return;
-        galleryPath_.clear();
-        galleryFrame_.reset();
+    const auto reloadGallery = [this] {
+        const QString path = galleryPath_;
+        setGalleryPath({});
         setGalleryPath(path);
+    };
+    connect(loader_, &ImageLoader::rawParametersChanged, this, [this, reloadGallery](const QString& path) {
+        if (galleryPath_ == path) reloadGallery();
+    });
+    connect(loader_, &ImageLoader::rawPresetsChanged, this, [this, reloadGallery] {
+        if (RawPresetStore::isHeaderlessImage(galleryPath_) && !loader_->rawParameters(galleryPath_))
+            reloadGallery();
     });
 
     if (startEmpty) {
@@ -550,14 +556,9 @@ QSize BrowseController::selectedImageSize() const {
     if (!canTransform()) return {};
     const QString path = selectedImagePaths().first();
     if (galleryPath_ == path && galleryImageSize_.isValid()) return galleryImageSize_;
-    const QString suffix = QFileInfo(path).suffix().toLower();
-    if (suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv")) {
+    if (RawPresetStore::isHeaderlessImage(path)) {
         auto raw = loader_->rawParameters(path);
-        if (!raw) raw = RawPresetStore::loadForFile(path);
-        if (!raw) {
-            const RawImageParameters inferred = RawPresetStore::inferFromFileName(path);
-            if (inferred.size.isValid()) raw = inferred;
-        }
+        if (!raw) raw = RawPresetStore::resolveForFile(QFileInfo(path));
         return raw ? raw->size : QSize{};
     }
     return QImageReader(path).size();
@@ -1253,14 +1254,9 @@ QString BrowseController::transformSelected(bool clockwise) {
     if (!canTransform()) return QCoreApplication::translate("FileOperations", "Select one image first.");
     const QString path = selectedImagePaths().first();
     std::optional<RawImageParameters> raw = loader_->rawParameters(path);
-    const QString suffix = QFileInfo(path).suffix().toLower();
-    if (!raw && (suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv")))
-        raw = RawPresetStore::loadForFile(path);
-    if (!raw && (suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv"))) {
-        const RawImageParameters inferred = RawPresetStore::inferFromFileName(path);
-        if (inferred.size.isValid()) raw = inferred;
-    }
-    if ((suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv")) && !raw) {
+    const bool headerless = RawPresetStore::isHeaderlessImage(path);
+    if (!raw && headerless) raw = RawPresetStore::resolveForFile(QFileInfo(path));
+    if (!raw && headerless) {
         const QString error =
             QCoreApplication::translate("FileOperations", "Configure the RAW/YUV dimensions and pixel format first.");
         setStatusText(error);
@@ -1282,14 +1278,9 @@ QString BrowseController::resizeSelected(int width, int height) {
         return QCoreApplication::translate("FileOperations", "Enter dimensions between 1 and 100,000 pixels.");
     const QString path = selectedImagePaths().first();
     std::optional<RawImageParameters> raw = loader_->rawParameters(path);
-    const QString suffix = QFileInfo(path).suffix().toLower();
-    if (!raw && (suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv")))
-        raw = RawPresetStore::loadForFile(path);
-    if (!raw && (suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv"))) {
-        const RawImageParameters inferred = RawPresetStore::inferFromFileName(path);
-        if (inferred.size.isValid()) raw = inferred;
-    }
-    if ((suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv")) && !raw)
+    const bool headerless = RawPresetStore::isHeaderlessImage(path);
+    if (!raw && headerless) raw = RawPresetStore::resolveForFile(QFileInfo(path));
+    if (!raw && headerless)
         return QCoreApplication::translate("FileOperations", "Configure the RAW/YUV dimensions and pixel format first.");
     if (raw && raw->isYuv() && ((width & 1) != 0 || (height & 1) != 0))
         return QCoreApplication::translate("FileOperations", "YUV 4:2:0 output dimensions must be even.");
@@ -1366,6 +1357,7 @@ void BrowseController::setGalleryPath(const QString& path) {
             if (result.frame && !self->networkAccess_->isRemote(normalized) &&
                 !self->directoryWatcher_->files().contains(normalized))
                 self->directoryWatcher_->addPath(normalized);
+            if (result.rawParametersRequired) self->galleryInfoText_ = result.error;
             self->applyGalleryFrame(result.frame, false);
         }, RequestOptions{LoadCategory::Interactive, 0, QStringLiteral("gallery")});
 }

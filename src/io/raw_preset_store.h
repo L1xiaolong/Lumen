@@ -7,6 +7,8 @@
 
 #include <optional>
 
+class QFileInfo;
+
 namespace mvpview {
 
 struct RawFilenameRule {
@@ -23,6 +25,8 @@ class RawPresetStore final {
     [[nodiscard]] static bool saveSidecar(const QString& path, const RawImageParameters& parameters,
                                           QString* error = nullptr);
     [[nodiscard]] static QString sidecarPath(const QString& path);
+    [[nodiscard]] static bool isHeaderlessImage(const QString& path);
+    [[nodiscard]] static std::optional<RawImageParameters> resolveForFile(const QFileInfo& file);
     [[nodiscard]] static RawImageParameters inferFromFileName(const QString& path);
     [[nodiscard]] static QStringList namedPresetNames();
     [[nodiscard]] static std::optional<RawImageParameters>

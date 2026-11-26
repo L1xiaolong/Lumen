@@ -19,6 +19,7 @@ Item {
     property var dimensions
     property bool panoramaCandidate: false
     property int bitDepth: 0
+    property bool rawParametersRequired: false
     property string fileSizeText
     property bool requestThumbnail: true
     property bool componentReady: false
@@ -116,7 +117,9 @@ Item {
                 Layout.fillWidth: true
                 text: metadataStrip.directory
                       ? qsTr("Folder")
-                      : metadataStrip.dimensionText + " · " +
+                      : root.rawParametersRequired
+                        ? qsTranslate("RawParameters", "Set image parameters")
+                        : metadataStrip.dimensionText + " · " +
                         metadataStrip.depthText + " · " + metadataStrip.sizeText
                 elide: Text.ElideRight
                 color: root.selected ? Theme.selectionMutedInk : Theme.mutedInk

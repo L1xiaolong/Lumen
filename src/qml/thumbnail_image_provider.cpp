@@ -128,7 +128,11 @@ class ThumbnailImageResponse final : public QQuickImageResponse {
         if (finished_ || cancelled_.load(std::memory_order_relaxed)) return;
         QImage image;
         if (result.frame && result.frame->qImage()) image = *result.frame->qImage();
-        if (image.isNull()) image = placeholder(QStringLiteral("Preview unavailable"), requestedSize_);
+        if (image.isNull()) {
+            image = placeholder(result.rawParametersRequired ? result.error
+                                                             : QStringLiteral("Preview unavailable"),
+                                requestedSize_);
+        }
         {
             const QMutexLocker lock(&mutex_);
             image_ = std::move(image);

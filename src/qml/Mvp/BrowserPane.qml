@@ -277,6 +277,7 @@ Rectangle {
             required property var dimensions
             required property bool panoramaCandidate
             required property int bitDepth
+            required property bool rawParametersRequired
             required property string fileSizeText
             required property url thumbnailUrl
             required property bool isDirectory
@@ -302,6 +303,7 @@ Rectangle {
                 dimensions: parent.dimensions
                 panoramaCandidate: parent.panoramaCandidate
                 bitDepth: parent.bitDepth
+                rawParametersRequired: parent.rawParametersRequired
                 fileSizeText: parent.fileSizeText
                 requestThumbnail: parent.thumbnailDemand
                 thumbnailUrl: parent.thumbnailUrl

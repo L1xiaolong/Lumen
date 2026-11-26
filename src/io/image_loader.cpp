@@ -37,11 +37,6 @@ int priorityFor(const RequestOptions& options) {
     return base + options.priorityAdjustment;
 }
 
-bool isHeaderlessImage(const QString& path) {
-    const auto suffix = QFileInfo(path).suffix().toLower();
-    return suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv");
-}
-
 QString cacheKeyPrefix(const DecodeRequest& request, const QString& path, qint64 size, qint64 modifiedMs) {
     QString key = path + QLatin1Char('|') + QString::number(size) +
         QLatin1Char('|') + QString::number(modifiedMs) +
@@ -203,7 +198,10 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
             return {};
         }
         if (!request.rawParameters) request.rawParameters = rawParameters(request.path);
-        const bool inferParameters = !request.rawParameters && isHeaderlessImage(request.path);
+        const bool inferParameters = !request.rawParameters && !request.metadataSource &&
+                                     RawPresetStore::isHeaderlessImage(request.path);
+        const int presetRevision = rawPresetRevision_;
+        const auto previous = inferParameters ? fileSnapshots_.value(request.path) : FileSnapshot{};
         auto state = std::make_shared<LoadHandle::State>();
         state->activeConsumers = std::make_shared<std::atomic_int>(1);
         const QString key = QStringLiteral("stat:%1").arg(++nextInFlightGeneration_);
@@ -218,7 +216,8 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
         job.queuedAt.start();
         const QPointer<ImageLoader> self(this);
         job.work = [self, key, state, requestId, request = std::move(request),
-                    callback = std::move(callback), priority, viewportManaged, inferParameters]() mutable {
+                    callback = std::move(callback), priority, viewportManaged, inferParameters,
+                    presetRevision, previous]() mutable {
             FileSnapshot info;
             if (!state->cancelled.load()) {
                 const QFileInfo file(request.path);
@@ -227,29 +226,30 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
                 info.size = file.size();
                 info.modifiedMs = file.lastModified().toMSecsSinceEpoch();
                 if (info.browsable && inferParameters && !state->cancelled.load()) {
-                    request.rawParameters = RawPresetStore::loadForFile(request.path);
-                    if (!request.rawParameters) request.rawParameters = RawPresetStore::inferFromFileName(request.path);
-                    if (request.rawParameters && availableFrameCount(info.size, *request.rawParameters) <= 0)
-                        request.rawParameters.reset();
+                    const bool unchanged = previous.rawParametersChecked &&
+                                           previous.size == info.size && previous.modifiedMs == info.modifiedMs;
+                    info.rawParametersChecked = true;
+                    info.inferredRawParameters = unchanged ? previous.inferredRawParameters
+                                                           : RawPresetStore::resolveForFile(file);
                 }
             }
             QMetaObject::invokeMethod(self, [self, key, state, requestId, request = std::move(request),
-                                            callback = std::move(callback), priority, viewportManaged, info, inferParameters]() mutable {
+                                            callback = std::move(callback), priority, viewportManaged,
+                                            info, inferParameters, presetRevision]() mutable {
                 if (!self) return;
                 --self->parallelRunning_;
                 self->inFlight_.remove(key);
                 self->scheduleDispatch();
                 if (state->cancelled.load()) return;
-                if (self->fileSnapshots_.size() >= 512) self->fileSnapshots_.clear();
-                self->fileSnapshots_.insert(request.path, info);
-                if (inferParameters) {
-                    if (request.rawParameters) self->adoptRawParameters(request.path, *request.rawParameters);
-                    request.rawParameters = self->rawParameters(request.path);
+                const bool retry = inferParameters && presetRevision != self->rawPresetRevision_;
+                if (!retry) {
+                    if (self->fileSnapshots_.size() >= 512) self->fileSnapshots_.clear();
+                    self->fileSnapshots_.insert(request.path, info);
                 }
                 auto next = self->requestImpl(requestId, std::move(request),
                     [state, callback = std::move(callback)](quint64 id, const DecodeResult& result) {
                         if (!state->cancelled.load()) callback(id, result);
-                    }, priority, viewportManaged, info);
+                    }, priority, viewportManaged, retry ? std::nullopt : std::optional(info));
                 const QMutexLocker lock(&state->nextMutex);
                 state->next = next.state_;
                 if (state->cancelled.load()) next.cancel();
@@ -277,6 +277,13 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
     }
     if (!request.rawParameters) {
         request.rawParameters = rawParameters(request.path);
+        if (!request.rawParameters) request.rawParameters = sourceInfo.inferredRawParameters;
+    }
+    if (!request.rawParameters && !request.metadataSource &&
+        RawPresetStore::isHeaderlessImage(request.path)) {
+        emit rawParametersRequired(sourceInfo.absolutePath);
+        callback(requestId, {{}, QCoreApplication::translate("RawParameters", "Set image parameters"), true});
+        return {};
     }
     if (!request.rawParameters && decoder_->executionMode(request.path) == DecodeExecutionMode::Parallel)
         request.requireDisplayImage = false; // Encoded images already contain their full CPU image.
@@ -424,7 +431,7 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
                 coveringPreviewPrefixes.append(cacheKeyPrefix(candidate, sourceInfo.absolutePath, sourceInfo.size, sourceInfo.modifiedMs));
         }
     }
-    if (request.rawParameters && !isHeaderlessImage(request.path)) {
+    if (request.rawParameters && !RawPresetStore::isHeaderlessImage(request.path)) {
         // Keep discovered defaults in the cache key, but let the camera decoder
         // recompute them when unpacking reveals more about the sensor.
         const QReadLocker lock(&rawParametersLock_);
@@ -435,10 +442,14 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
             request.rawParameters.reset();
         }
     }
+    const QString headerlessKey = request.rawParameters && RawPresetStore::isHeaderlessImage(request.path)
+        ? request.rawParameters->cacheKey() : QString{};
+    const int presetRevision = rawPresetRevision_;
     inFlight_[key].work =
         [self, decoder, diskCache, request = std::move(request), key, keyPrefix, decoderIdentity, generation,
          activeConsumers, pendingWrites, resultBufferBudget, decodeWorkingBudget, workingPriority, residentAccounting,
          obsoletePreviewPrefixes, coveringPreviewPrefixes, coveringFullPrefix, serialized,
+         headerlessKey, presetRevision,
          thumbnailSource = std::move(thumbnailSource)]() mutable {
             std::shared_ptr<ResultBufferBudget::Reservation> workingReservation;
             qint64 workingWaitMs = 0;
@@ -480,7 +491,8 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
                             frame->descriptor.validBits = 8;
                         }
                         if (request.rawParameters && request.rawParameters->size.isValid()) {
-                            frame->metadata.sourceSize = request.rawParameters->size;
+                            frame->metadata.sourceSize = orientedImageSize(request.rawParameters->size,
+                                                                           request.rawParameters->orientation);
                         } else {
                             const QSize cachedSourceSize(
                                 cachedImage.text(QStringLiteral("mvpview.sourceWidth")).toInt(),
@@ -613,6 +625,7 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
                 self,
                 [self, completion = [self, resultReservation, result = std::move(result), key, keyPrefix, decoderIdentity, purpose = request.purpose,
                  obsoletePreviewPrefixes, coveringPreviewPrefixes, coveringFullPrefix,
+                 headerlessKey, presetRevision,
                  sourcePath = request.path, generation, activeConsumers, diskHit, metadataOnly = bool(request.metadataSource),
                  elapsedMs = decodeElapsedMs]() {
                     if (!self) {
@@ -625,12 +638,12 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
                          {"elapsedMs", elapsedMs}, {"diskHit", diskHit},
                          {"succeeded", result.succeeded()}, {"error", result.error},
                          {"cancelled", activeConsumers->load() <= 0},
-                         {"cachedBytes", qint64(self->cachedBytes())}}, isHeaderlessImage(sourcePath));
+                         {"cachedBytes", qint64(self->cachedBytes())}}, RawPresetStore::isHeaderlessImage(sourcePath));
                     const auto currentGeneration = self->inFlight_.constFind(key);
                     if (currentGeneration == self->inFlight_.cend() || currentGeneration->generation != generation) return;
                     if (result.frame && activeConsumers->load(std::memory_order_relaxed) > 0) {
                         QString frameKey = key;
-                        if (result.frame->rawParameters &&
+                        if (result.frame->rawParameters && !RawPresetStore::isHeaderlessImage(sourcePath) &&
                             self->adoptRawParameters(sourcePath, *result.frame->rawParameters)) {
                             // Subsequent requests include the discovered defaults. Store once
                             // under that identity, retaining the original file-version prefix.
@@ -671,7 +684,24 @@ LoadHandle ImageLoader::requestImpl(quint64 requestId, DecodeRequest request, Ca
                             const int validBits = result.frame->rawParameters
                                                       ? result.frame->rawParameters->validBits()
                                                       : result.frame->descriptor.validBits;
-                            emit self->thumbnailMetadataReady(sourcePath, sourceSize, validBits);
+                            // A job started before a preset or manual edit still owns its pixels,
+                            // but its metadata must not replace the new layout in the browser.
+                            bool currentLayout = true;
+                            if (!headerlessKey.isEmpty()) {
+                                const QString explicitKey = self->rawParametersRevision(sourcePath);
+                                const auto snapshot = self->fileSnapshots_.constFind(sourcePath);
+                                if (!explicitKey.isEmpty()) {
+                                    currentLayout = explicitKey == headerlessKey;
+                                } else if (snapshot != self->fileSnapshots_.cend() && snapshot->rawParametersChecked) {
+                                    currentLayout = snapshot->inferredRawParameters &&
+                                        snapshot->inferredRawParameters->cacheKey() == headerlessKey;
+                                } else {
+                                    currentLayout = presetRevision == self->rawPresetRevision_;
+                                }
+                            }
+                            if (currentLayout) {
+                                emit self->thumbnailMetadataReady(sourcePath, sourceSize, validBits);
+                            }
                         }
                     }
                     const auto current = self->inFlight_.constFind(key);
@@ -829,7 +859,7 @@ void ImageLoader::dispatch() {
             QStringLiteral("loader.dispatched"),
             {{"file", diagnostics::fileId(best->path)}, {"generation", qint64(best->generation)},
              {"queueMs", best->queuedAt.elapsed()}, {"priority", best->priority},
-             {"pending", inFlight_.size()}}, isHeaderlessImage(best->path));
+             {"pending", inFlight_.size()}}, RawPresetStore::isHeaderlessImage(best->path));
         if (best->serialized) { ++serializedRunning_; serializedPool_.start(std::move(best->work)); }
         else { ++parallelRunning_; pool_.start(std::move(best->work)); }
     }
@@ -964,6 +994,13 @@ QString ImageLoader::rawParametersRevision(const QString& path) const {
     return rawParameterRevisions_.value(QFileInfo(path).absoluteFilePath());
 }
 
+void ImageLoader::invalidateRawPresets() {
+    Q_ASSERT(thread() == QThread::currentThread());
+    ++rawPresetRevision_;
+    fileSnapshots_.clear();
+    emit rawPresetsChanged();
+}
+
 std::optional<RawImageParameters> ImageLoader::rawParameters(const QString& path) const {
     const QReadLocker lock(&rawParametersLock_);
     const auto found = rawParameters_.constFind(QFileInfo(path).absoluteFilePath());
@@ -981,6 +1018,7 @@ bool ImageLoader::isCached(DecodeRequest request) const {
             QLatin1Char('|') + decoder_->cacheIdentity();
     };
     if (!request.rawParameters) request.rawParameters = rawParameters(request.path);
+    if (!request.rawParameters) request.rawParameters = snapshot->inferredRawParameters;
     if (!request.rawParameters && decoder_->executionMode(request.path) == DecodeExecutionMode::Parallel)
         request.requireDisplayImage = false;
     if (request.purpose == DecodePurpose::Preview) {

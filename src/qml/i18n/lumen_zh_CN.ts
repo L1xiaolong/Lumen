@@ -1394,6 +1394,13 @@ Choose another folder or drop images here</source>
     </message>
 </context>
 <context>
+    <name>RawParameters</name>
+    <message>
+        <source>Set image parameters</source>
+        <translation>请设置图像参数</translation>
+    </message>
+</context>
+<context>
     <name>RawParametersDialog</name>
     <message>
         <location filename="../Mvp/RawParametersDialog.qml" line="109"/>

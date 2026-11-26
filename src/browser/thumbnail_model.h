@@ -6,6 +6,7 @@
 #include <QHash>
 #include <QMimeData>
 #include <QPixmap>
+#include <QSet>
 
 namespace mvpview {
 
@@ -30,7 +31,8 @@ class ThumbnailModel final : public QAbstractListModel {
         TechnicalLabelRole,
         SelectedRole,
         SelectionOrdinalRole,
-        PanoramaCandidateRole
+        PanoramaCandidateRole,
+        RawParametersRequiredRole
     };
 
     explicit ThumbnailModel(ImageLoader* loader, QObject* parent = nullptr);
@@ -60,6 +62,7 @@ class ThumbnailModel final : public QAbstractListModel {
     QHash<QString, int> pathToRow_;
     mutable QHash<QString, QSize> dimensions_;
     mutable QHash<QString, int> bitDepths_;
+    QSet<QString> rawParametersRequired_;
     QStringList selectedPaths_;
     QHash<QString, int> selectedOrdinals_;
     // QML uses ThumbnailUrlRole; legacy decoration artwork is created only when requested.

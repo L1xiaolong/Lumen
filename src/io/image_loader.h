@@ -75,6 +75,8 @@ class ImageLoader final : public QObject {
     // File-derived defaults fill an empty entry; they do not change the rendered pixels.
     bool adoptRawParameters(const QString& path, const RawImageParameters& parameters);
     [[nodiscard]] QString rawParametersRevision(const QString& path) const;
+    [[nodiscard]] int rawPresetRevision() const { return rawPresetRevision_; }
+    void invalidateRawPresets();
     [[nodiscard]] QString displayRevision() const;
     [[nodiscard]] std::optional<RawImageParameters> rawParameters(const QString& path) const;
     // Non-blocking scheduling hint from the last worker snapshot, not a freshness guarantee.
@@ -109,6 +111,8 @@ class ImageLoader final : public QObject {
   signals:
     void displayRevisionChanged();
     void rawParametersChanged(const QString& path);
+    void rawPresetsChanged();
+    void rawParametersRequired(const QString& path);
     void thumbnailMetadataReady(const QString& path, const QSize& sourceSize, int validBits);
 
   private:
@@ -141,9 +145,12 @@ class ImageLoader final : public QObject {
         qint64 size = 0;
         qint64 modifiedMs = 0;
         bool browsable = false;
+        bool rawParametersChecked = false;
+        std::optional<RawImageParameters> inferredRawParameters;
     };
     // Hints only. Every actual request revalidates on a worker before using pixels.
     QHash<QString, FileSnapshot> fileSnapshots_;
+    int rawPresetRevision_ = 0;
     [[nodiscard]] LoadHandle requestImpl(quint64 requestId, DecodeRequest request,
                                          Callback callback, int priority, bool viewportManaged = true,
                                          std::optional<FileSnapshot> snapshot = std::nullopt);

@@ -64,6 +64,7 @@ inline qsizetype addedAllocationBytes(qsizetype a, qsizetype b) {
 struct DecodeResult {
     ImageFramePtr frame;
     QString error;
+    bool rawParametersRequired = false;
 
     [[nodiscard]] bool succeeded() const { return frame != nullptr; }
 };

@@ -311,14 +311,9 @@ QString CompareController::rotateSlot(int slot, bool clockwise) {
         return QCoreApplication::translate("FileOperations", "Select an image to rotate.");
     const QString path = paths_.at(slot);
     std::optional<RawImageParameters> raw = loader_->rawParameters(path);
-    const QString suffix = QFileInfo(path).suffix().toLower();
-    if (!raw && (suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv")))
-        raw = RawPresetStore::loadForFile(path);
-    if (!raw && (suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv"))) {
-        const RawImageParameters inferred = RawPresetStore::inferFromFileName(path);
-        if (inferred.size.isValid()) raw = inferred;
-    }
-    if ((suffix == QStringLiteral("raw") || suffix == QStringLiteral("yuv")) && !raw)
+    const bool headerless = RawPresetStore::isHeaderlessImage(path);
+    if (!raw && headerless) raw = RawPresetStore::resolveForFile(QFileInfo(path));
+    if (!raw && headerless)
         return QCoreApplication::translate("FileOperations", "Configure the RAW/YUV dimensions and pixel format first.");
     const QString error = ImageTransformer::rotate(
         path, clockwise ? QuarterTurn::Clockwise : QuarterTurn::CounterClockwise, raw);
