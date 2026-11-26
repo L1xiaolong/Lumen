@@ -24,6 +24,7 @@ ProductionCompareCanvas 1.0 ProductionCompareCanvas.qml
 ProductionFullScreenCanvas 1.0 ProductionFullScreenCanvas.qml
 TopToolbar 1.0 TopToolbar.ui.qml
 ThumbnailTile 1.0 ThumbnailTile.qml
+FileToolTip 1.0 FileToolTip.qml
 PanoramaBadge 1.0 PanoramaBadge.qml
 
 ThumbnailViewport 1.0 ThumbnailViewport.qml

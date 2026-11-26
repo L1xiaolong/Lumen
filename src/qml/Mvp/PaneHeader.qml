@@ -17,10 +17,6 @@ Rectangle {
     readonly property bool searchInputFocused: paneSearch.activeFocus
     objectName: "paneHeader-" + paneIndex
     function activate() { workspaceController.activatePane(paneIndex) }
-    function locationLabel(path) {
-        const parts = String(path).split(/[\\/]/).filter(function(part) { return part.length > 0 })
-        return parts.length > 0 ? parts[parts.length - 1] : String(path)
-    }
     function submitLocation() {
         activate()
         const error = controller.navigateToTypedPath(locationField.text)
@@ -238,9 +234,10 @@ Rectangle {
                                 id: recentLocationButton
                                 required property string modelData
                                 width: recentLocationColumn.width
-                                height: 42
+                                height: 32
+                                text: modelData
                                 hoverEnabled: true
-                                ToolTip.visible: hovered
+                                ToolTip.visible: hovered && recentPathLabel.truncated
                                 ToolTip.delay: 500
                                 ToolTip.text: modelData
 
@@ -249,32 +246,17 @@ Rectangle {
                                            ? Theme.softHover : "transparent"
                                     radius: 4
                                 }
-                                contentItem: Item {
-                                    Column {
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.leftMargin: 8
-                                        anchors.rightMargin: 8
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        spacing: 1
-                                        Text {
-                                            width: parent.width
-                                            text: root.locationLabel(modelData)
-                                            elide: Text.ElideRight
-                                            color: Theme.graphiteInk
-                                            font.family: Theme.uiFont
-                                            font.pixelSize: 12
-                                            font.weight: Font.Medium
-                                        }
-                                        Text {
-                                            width: parent.width
-                                            text: modelData
-                                            elide: Text.ElideMiddle
-                                            color: Theme.mutedInk
-                                            font.family: Theme.monoFont
-                                            font.pixelSize: 10
-                                        }
-                                    }
+                                contentItem: Text {
+                                    id: recentPathLabel
+                                    text: recentLocationButton.text
+                                    textFormat: Text.PlainText
+                                    elide: Text.ElideMiddle
+                                    verticalAlignment: Text.AlignVCenter
+                                    leftPadding: 8
+                                    rightPadding: 8
+                                    color: Theme.graphiteInk
+                                    font.family: Theme.uiFont
+                                    font.pixelSize: 12
                                 }
                                 onClicked: {
                                     root.activate()

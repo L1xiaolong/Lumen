@@ -1185,11 +1185,13 @@ Rectangle {
                                       ? Theme.keyboardFocus
                                       : galleryDelegate.isSelected ? Theme.fileSelectionBorder : "transparent"
                         border.width: galleryStrip.activeFocus && galleryDelegate.GridView.isCurrentItem ? 2 : 1
-                        PathToolTip {
-                            objectName: "galleryPathToolTip"
+                        FileToolTip {
+                            objectName: "galleryFileToolTip"
                             parent: galleryCard
                             path: galleryDelegate.path
                             fileName: galleryDelegate.fileName
+                            technicalLabel: galleryDelegate.technicalLabel
+                            directory: galleryDelegate.isDirectory
                             visible: galleryMouse.containsMouse && !galleryDragHandler.active && galleryDelegate.path.length > 0
                         }
                         Rectangle {

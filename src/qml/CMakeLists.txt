@@ -81,7 +81,7 @@ qt_add_qml_module(LumenQml
         Mvp/ApplicationNotices.qml
         Mvp/ThumbnailViewport.qml
         Mvp/NavigationThumbnail.qml
-        Mvp/PathToolTip.qml
+        Mvp/FileToolTip.qml
         Mvp/ThumbnailTile.qml
         Mvp/PanoramaBadge.qml
         Pages/BrowsePage.qml

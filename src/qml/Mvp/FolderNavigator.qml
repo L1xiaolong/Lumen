@@ -169,7 +169,7 @@ Rectangle {
         color: "transparent"
         readonly property bool selected: root.samePath(entry.path, root.controller.currentDirectory)
 
-        ToolTip.visible: sidebarPlaceMouse.containsMouse
+        ToolTip.visible: entry.kind === "recent" && sidebarPlaceMouse.containsMouse
         ToolTip.delay: 500
         ToolTip.text: String(entry.path)
 
@@ -544,13 +544,6 @@ Rectangle {
                 font.family: root.nativeFont
                 font.pixelSize: 13
                 font.weight: treeDelegate.isCurrentFolder ? Theme.emphasisFontWeight : Theme.bodyFontWeight
-            }
-
-            PathToolTip {
-                parent: treeDelegate
-                path: treeDelegate.filePath
-                fileName: treeDelegate.display
-                visible: directoryMouse.containsMouse
             }
 
             MouseArea {

@@ -5,19 +5,24 @@ ToolTip {
     id: control
     property string path: ""
     property string fileName: path.split(/[\\/]/).pop() || path
-    readonly property int separatorIndex: Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"))
-    readonly property string directoryPath: separatorIndex >= 0 ? path.slice(0, separatorIndex) : ""
-    text: path
+    property string technicalLabel: ""
+    property bool directory: false
+    readonly property string details: {
+        if (!directory)
+            return technicalLabel
+        const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"))
+        return separatorIndex >= 0 ? path.slice(0, separatorIndex) : ""
+    }
+    text: details.length > 0 ? fileName + "\n" + details : fileName
     delay: 800
     timeout: 8000
     padding: 12
     margins: 8
-    implicitWidth: Math.min(480, Math.max(240, Math.max(nameLabel.implicitWidth, directoryLabel.implicitWidth) + 24))
+    implicitWidth: Math.min(480, Math.max(240, Math.max(nameLabel.implicitWidth, detailsLabel.implicitWidth) + 24))
     contentItem: Column {
         spacing: 6
         Text {
             id: nameLabel
-            objectName: "pathTooltipName"
             width: parent.width
             text: control.fileName
             textFormat: Text.PlainText
@@ -28,10 +33,9 @@ ToolTip {
             font.weight: Font.Medium
         }
         Text {
-            id: directoryLabel
-            objectName: "pathTooltipDirectory"
+            id: detailsLabel
             width: parent.width
-            text: control.directoryPath
+            text: control.details
             textFormat: Text.PlainText
             wrapMode: Text.WrapAnywhere
             visible: text.length > 0

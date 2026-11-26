@@ -39,10 +39,6 @@ Item {
     property bool selected: false
     property int selectionOrdinal: 0
     property int displayMode: 0
-    readonly property string pathToolTipText: pathTip.text
-    readonly property bool pathToolTipVisible: pathTip.visible
-    readonly property int pathToolTipDelay: pathTip.delay
-    readonly property bool pathHoverActive: tileMouse.containsMouse
     signal activated
     signal selectionRequested(bool extend, bool toggle)
     signal imageResizeRequested()
@@ -141,12 +137,13 @@ Item {
     width: GridView.view ? GridView.view.cellWidth - 16 : 160
     height: displayMode === 1 ? 68 : width * 0.75 + (displayMode === 2 ? 36 : 48)
 
-    PathToolTip {
-        id: pathTip
-        objectName: "thumbnailPathToolTip"
+    FileToolTip {
+        objectName: "thumbnailFileToolTip"
         parent: root
         path: root.path
-        fileName: root.fileName || path.split(/[\\/]/).pop() || path
+        fileName: root.fileName
+        technicalLabel: root.technicalLabel
+        directory: root.directory
         visible: tileMouse.containsMouse && !tileDragHandler.active && root.path.length > 0
     }
 
