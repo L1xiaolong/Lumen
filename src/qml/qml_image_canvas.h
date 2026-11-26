@@ -50,18 +50,18 @@ class QmlImageCanvas : public QQuickRhiItem {
     void setPresentationMode(int mode);
     void setCompareAmount(qreal amount);
     void setSynchronized(bool enabled);
+    void setHoldCandidate(bool active);
     void setBackgroundColor(const QColor& color);
     void setSmoothDisplay(bool enabled);
     void setViewportTextureEnabled(bool enabled);
     void setFrames(const QVector<ImageFramePtr>& frames, int changedSlot = -1,
                    bool resetChangedView = false);
 
-    // Compatibility helpers used by the comparison controller while a
-    // temporary B-over-A frame is active.
     void setFrameAt(int slot, ImageFramePtr frame, bool resetView = false);
     ImageFramePtr frameAt(int slot) const;
     QSize logicalImageSize(int slot) const;
     ViewState effectiveViewState(int slot) const;
+    int displayedSourceSlot(int slot) const;
 
     Q_INVOKABLE void fitAll();
     Q_INVOKABLE void actualPixelsAll();
@@ -107,6 +107,7 @@ class QmlImageCanvas : public QQuickRhiItem {
     int presentationMode_ = 0;
     qreal compareAmount_ = 0.5;
     bool synchronized_ = true;
+    bool holdCandidate_ = false;
     bool dragging_ = false;
     bool dividerDragging_ = false;
     int activeSlot_ = -1;

@@ -234,6 +234,7 @@ class Renderer final : public QQuickRhiItemRenderer {
     QPointer<QmlImageCanvas> canvas_;
     bool notifyImageFrame_ = false;
     int presentationMode_ = 0;
+    int referenceSourceSlot_ = 0;
     qreal compareAmount_ = 0.5;
     QColor backgroundColor_{160, 160, 160};
     bool smoothDisplay_ = true;
@@ -248,6 +249,7 @@ class Renderer final : public QQuickRhiItemRenderer {
     std::unique_ptr<QRhiBuffer> compareUniform_;
     std::unique_ptr<QRhiSampler> sampler_;
     std::array<SlotResources, kMaximumImages> slots_;
+    std::unique_ptr<QRhiShaderResourceBindings> coverBindings_;
     std::unique_ptr<QRhiShaderResourceBindings> encodedCompareBindings_;
     std::unique_ptr<QRhiShaderResourceBindings> yuvCompareBindings_;
     std::unique_ptr<QRhiShaderResourceBindings> bayerCompareBindings_;
@@ -299,6 +301,7 @@ class Renderer final : public QQuickRhiItemRenderer {
 
     void resetAll() {
         resetPipelines();
+        coverBindings_.reset();
         encodedCompareBindings_.reset();
         yuvCompareBindings_.reset();
         bayerCompareBindings_.reset();
@@ -322,6 +325,7 @@ class Renderer final : public QQuickRhiItemRenderer {
 
     void rebuildSampler() {
         resetPipelines();
+        coverBindings_.reset();
         encodedCompareBindings_.reset();
         yuvCompareBindings_.reset();
         bayerCompareBindings_.reset();
@@ -405,35 +409,45 @@ class Renderer final : public QQuickRhiItemRenderer {
         resourceCreated(texture->create(), "placeholder");
     }
 
+    bool bindSideResources(std::unique_ptr<QRhiShaderResourceBindings>& bindings,
+                           const SlotResources& source, QRhiBuffer* matrix) {
+        if (!bindings)
+            bindings.reset(rhi_->newShaderResourceBindings());
+        bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(0, QRhiShaderResourceBinding::VertexStage,
+                                                     matrix),
+            QRhiShaderResourceBinding::sampledTexture(
+                1, QRhiShaderResourceBinding::FragmentStage, source.encoded.get(), sampler_.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                2, QRhiShaderResourceBinding::FragmentStage, source.y.get(), sampler_.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                3, QRhiShaderResourceBinding::FragmentStage, source.u.get(), sampler_.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                4, QRhiShaderResourceBinding::FragmentStage, source.v.get(), sampler_.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                5, QRhiShaderResourceBinding::FragmentStage, source.raw.get(), sampler_.get()),
+            QRhiShaderResourceBinding::uniformBuffer(
+                6, QRhiShaderResourceBinding::FragmentStage, source.yuvUniform.get()),
+            QRhiShaderResourceBinding::uniformBuffer(
+                7, QRhiShaderResourceBinding::FragmentStage, source.bayerUniform.get()),
+            QRhiShaderResourceBinding::uniformBuffer(
+                8, QRhiShaderResourceBinding::FragmentStage, source.sourceUniform.get()),
+        });
+        return resourceCreated(bindings->create(), "sideBindings");
+    }
+
     void rebuildBindings() {
         // Pipelines retain the binding object used to create their layout. Keep that
         // object alive across asynchronous texture changes and recreate its native
         // bindings in place; replacing it leaves existing pipelines with stale state.
         for (auto& slot : slots_) {
-            if (!slot.sideBindings)
-                slot.sideBindings.reset(rhi_->newShaderResourceBindings());
-            slot.sideBindings->setBindings({
-                QRhiShaderResourceBinding::uniformBuffer(0, QRhiShaderResourceBinding::VertexStage,
-                                                         slot.matrix.get()),
-                QRhiShaderResourceBinding::sampledTexture(1,
-                                                          QRhiShaderResourceBinding::FragmentStage,
-                                                          slot.encoded.get(), sampler_.get()),
-                QRhiShaderResourceBinding::sampledTexture(
-                    2, QRhiShaderResourceBinding::FragmentStage, slot.y.get(), sampler_.get()),
-                QRhiShaderResourceBinding::sampledTexture(
-                    3, QRhiShaderResourceBinding::FragmentStage, slot.u.get(), sampler_.get()),
-                QRhiShaderResourceBinding::sampledTexture(
-                    4, QRhiShaderResourceBinding::FragmentStage, slot.v.get(), sampler_.get()),
-                QRhiShaderResourceBinding::sampledTexture(
-                    5, QRhiShaderResourceBinding::FragmentStage, slot.raw.get(), sampler_.get()),
-                QRhiShaderResourceBinding::uniformBuffer(
-                    6, QRhiShaderResourceBinding::FragmentStage, slot.yuvUniform.get()),
-                QRhiShaderResourceBinding::uniformBuffer(
-                    7, QRhiShaderResourceBinding::FragmentStage, slot.bayerUniform.get()),
-                QRhiShaderResourceBinding::uniformBuffer(
-                    8, QRhiShaderResourceBinding::FragmentStage, slot.sourceUniform.get()),
-            });
-            if (!resourceCreated(slot.sideBindings->create(), "sideBindings")) return;
+            if (!bindSideResources(slot.sideBindings, slot, slot.matrix.get())) return;
+        }
+        // Both panes can draw B's textures in the same pass, with a matrix for each pane.
+        if (frames_.size() == 2) {
+            if (!bindSideResources(coverBindings_, slots_[1], slots_[0].matrix.get())) return;
+        } else {
+            coverBindings_.reset();
         }
 
         if (!encodedCompareBindings_)
@@ -641,17 +655,17 @@ class Renderer final : public QQuickRhiItemRenderer {
                bayerCompareBindings_.get());
     }
 
-    QMatrix4x4 matrixFor(int slot) const {
+    QMatrix4x4 matrixFor(int slot, int sourceSlot) const {
         QMatrix4x4 matrix = rhi_->clipSpaceCorrMatrix();
-        const QSize imageSize = logicalSize(frames_.value(slot));
+        const QSize imageSize = logicalSize(frames_.value(sourceSlot));
         const QRectF cell =
             comparisonCell(slot, static_cast<int>(frames_.size()), presentationMode_, itemSize_);
         if (imageSize.isEmpty() || cell.isEmpty() || itemSize_.isEmpty()) {
             matrix.scale(0.F);
             return matrix;
         }
-        const ViewState state = viewStates_.value(slot);
-        const QRect sourceRect = slots_[static_cast<std::size_t>(slot)].encodedSourceRect;
+        const ViewState state = viewStates_.value(sourceSlot);
+        const QRect sourceRect = slots_[static_cast<std::size_t>(sourceSlot)].encodedSourceRect;
         const QRectF region = sourceRect.isEmpty() ? QRectF(QPointF{}, imageSize) : QRectF(sourceRect);
         const double imageWidth = region.width() * state.pixelsPerImagePixel;
         const double imageHeight = region.height() * state.pixelsPerImagePixel;
@@ -761,6 +775,7 @@ class Renderer final : public QQuickRhiItemRenderer {
             resourcesDirty_ = true;
         }
         presentationMode_ = incomingMode;
+        referenceSourceSlot_ = canvas->displayedSourceSlot(0);
         compareAmount_ = canvas->compareAmount();
         backgroundColor_ = canvas->backgroundColor();
         viewportTextureEnabled_ = canvas->viewportTextureEnabled();
@@ -801,7 +816,7 @@ class Renderer final : public QQuickRhiItemRenderer {
 
         auto* updates = rhi_->nextResourceUpdateBatch();
         for (int slot = 0; slot < kMaximumImages; ++slot) {
-            const QMatrix4x4 matrix = matrixFor(slot);
+            const QMatrix4x4 matrix = matrixFor(slot, slot == 0 ? referenceSourceSlot_ : slot);
             updates->updateDynamicBuffer(slots_[static_cast<std::size_t>(slot)].matrix.get(), 0, 64,
                                          matrix.constData());
             const ImageFramePtr frame = frames_.value(slot);
@@ -865,9 +880,9 @@ class Renderer final : public QQuickRhiItemRenderer {
                 if (!frames_.at(slot))
                     continue;
                 const auto index = static_cast<std::size_t>(slot);
-                SlotResources& resources = slots_[index];
                 QRhiGraphicsPipeline* pipeline = sidePipelines_[index].get();
-                QRhiShaderResourceBindings* bindings = resources.sideBindings.get();
+                QRhiShaderResourceBindings* bindings = slot == 0 && referenceSourceSlot_ == 1
+                    ? coverBindings_.get() : slots_[index].sideBindings.get();
                 commandBuffer->setGraphicsPipeline(pipeline);
                 // Viewport is dynamic RHI state. Re-issue it after every
                 // pipeline change; otherwise Metal can keep the first draw's
@@ -1076,6 +1091,14 @@ void QmlImageCanvas::setSynchronized(bool enabled) {
     emit synchronizedChanged();
 }
 
+void QmlImageCanvas::setHoldCandidate(bool active) {
+    if (holdCandidate_ == active)
+        return;
+    holdCandidate_ = active;
+    notifyNavigationChanged();
+    update();
+}
+
 void QmlImageCanvas::setBackgroundColor(const QColor& color) {
     if (backgroundColor_ == color)
         return;
@@ -1135,6 +1158,14 @@ ImageFramePtr QmlImageCanvas::frameAt(int slot) const {
     return slot >= 0 && slot < frames_.size() ? frames_.at(slot) : ImageFramePtr{};
 }
 
+int QmlImageCanvas::displayedSourceSlot(int slot) const {
+    if (slot == 0 && holdCandidate_ && presentationMode_ == 0 &&
+        frames_.size() == 2 && frames_.at(0) && frames_.at(1)) {
+        return 1;
+    }
+    return slot;
+}
+
 QSize QmlImageCanvas::logicalImageSize(int slot) const { return logicalSize(frameAt(slot)); }
 
 QRectF QmlImageCanvas::cellRect(int slot) const {
@@ -1171,11 +1202,11 @@ qreal QmlImageCanvas::dividerPosition() const {
 }
 
 QVariantMap QmlImageCanvas::navigationState(int slot) const {
-    const ImageFramePtr frame = frameAt(slot);
-    const QSize imageSize = logicalImageSize(slot);
+    const int sourceSlot = displayedSourceSlot(slot);
+    const QSize imageSize = logicalImageSize(sourceSlot);
     const QRectF cell = cellRect(slot);
-    const ViewState state = effectiveViewState(slot);
-    if (!frame || imageSize.isEmpty() || cell.isEmpty())
+    const ViewState state = effectiveViewState(sourceSlot);
+    if (imageSize.isEmpty() || cell.isEmpty())
         return {{QStringLiteral("visible"), false}};
     const double percent = state.pixelsPerImagePixel * 100.0;
     const QString zoom = std::abs(percent - std::round(percent)) < 0.05
@@ -1268,28 +1299,28 @@ QPointF QmlImageCanvas::normalizedPoint(int slot, const QPointF& position) const
 
 void QmlImageCanvas::emitPixelAt(const QPointF& position) {
     const int slot = slotAt(position);
-    const QSize imageSize = logicalImageSize(slot);
-    const ImageFramePtr frame = frameAt(slot);
-    if (slot < 0 || !frame || imageSize.isEmpty()) {
-        emit pixelHovered(slot, {}, {}, false);
+    const int sourceSlot = displayedSourceSlot(slot);
+    const QSize imageSize = logicalImageSize(sourceSlot);
+    const ImageFramePtr frame = frameAt(sourceSlot);
+    if (!frame || imageSize.isEmpty()) {
+        emit pixelHovered(sourceSlot, {}, {}, false);
         return;
     }
     const QRectF cell = cellRect(slot);
     const auto pixel = ViewTransform::imagePixelAtWidgetPoint(
-        position - cell.topLeft(), cell.size(), imageSize, effectiveViewState(slot));
+        position - cell.topLeft(), cell.size(), imageSize, effectiveViewState(sourceSlot));
     if (!pixel) {
-        emit pixelHovered(slot, {}, {}, false);
+        emit pixelHovered(sourceSlot, {}, {}, false);
         return;
     }
     const ComparisonPixelSample sample =
         ComparisonPixelProbe::sampleAtLogicalPixel(*frame, *pixel, imageSize);
-    if (sample.sourceSamplesPending && slot >= 0 &&
-        slot < probeFullResolutionRequested_.size() &&
-        probeFullResolutionRequested_.at(slot) != frame.get()) {
-        probeFullResolutionRequested_[slot] = frame.get();
-        emit pixelProbeFullResolutionRequested(slot);
+    if (sample.sourceSamplesPending && sourceSlot < probeFullResolutionRequested_.size() &&
+        probeFullResolutionRequested_.at(sourceSlot) != frame.get()) {
+        probeFullResolutionRequested_[sourceSlot] = frame.get();
+        emit pixelProbeFullResolutionRequested(sourceSlot);
     }
-    emit pixelHovered(slot, *pixel, sample.sourceValueText(), sample.valid);
+    emit pixelHovered(sourceSlot, *pixel, sample.sourceValueText(), sample.valid);
 }
 
 void QmlImageCanvas::probePixelAt(const QPointF& position) {
@@ -1323,17 +1354,18 @@ void QmlImageCanvas::pollCursorForPixelProbe() {
 
 void QmlImageCanvas::wheelEvent(QWheelEvent* event) {
     const int slot = slotAt(event->position());
-    const QSize imageSize = logicalImageSize(slot);
+    const int sourceSlot = displayedSourceSlot(slot);
+    const QSize imageSize = logicalImageSize(sourceSlot);
     const QRectF cell = cellRect(slot);
     if (slot < 0 || imageSize.isEmpty() || cell.isEmpty()) {
         event->ignore();
         return;
     }
-    const ViewState state = effectiveViewState(slot);
+    const ViewState state = effectiveViewState(sourceSlot);
     const double scale = state.pixelsPerImagePixel * std::pow(1.2, event->angleDelta().y() / 120.0);
     const QPointF local = event->position() - cell.topLeft();
     const bool controlHeld = isIndependentViewAdjustment(event->modifiers());
-    setViewState(slot,
+    setViewState(sourceSlot,
                  ViewTransform::zoomAt(state, scale, local,
                                        cell.size(),
                                        imageSize),
@@ -1376,11 +1408,12 @@ void QmlImageCanvas::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
     if (dragging_ && activeSlot_ >= 0) {
-        const ViewState state = effectiveViewState(activeSlot_);
+        const int sourceSlot = displayedSourceSlot(activeSlot_);
+        const ViewState state = effectiveViewState(sourceSlot);
         const bool controlHeld = isIndependentViewAdjustment(event->modifiers());
-        setViewState(activeSlot_,
+        setViewState(sourceSlot,
                      ViewTransform::panBy(state, event->position() - lastMousePosition_,
-                                          logicalImageSize(activeSlot_)),
+                                          logicalImageSize(sourceSlot)),
                      true, !controlHeld);
         lastMousePosition_ = event->position();
         event->accept();

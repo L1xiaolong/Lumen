@@ -95,7 +95,7 @@ These dependencies are needed only when **building from source**. The repository
 To enable in-app macOS updates for GitHub Releases, generate a dedicated key pair with Sparkle's `generate_keys`.
 Set the Actions variable `MVPVIEW_SPARKLE_PUBLIC_KEY` to the public key and the Actions secret `MVPVIEW_SPARKLE_PRIVATE_KEY` to the private key exported by `generate_keys -x`.
 The release workflow embeds Sparkle and signs both the DMG and its version-specific `lumen-appcast.xml`.
-Use the same keys for the installed version and subsequent releases. Builds without a signed update feed offer the release page for manual download.
+Use the same keys for the installed version and subsequent releases. Without a signed update feed, Lumen downloads and verifies the DMG in the app, then offers to open it for manual installation.
 
 | Dependency | Requirements / purpose |
 | --- | --- |

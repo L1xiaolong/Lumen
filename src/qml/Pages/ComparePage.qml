@@ -169,7 +169,7 @@ Item {
         }
     }
     Keys.onReleased: function(event) {
-        if (event.key === Qt.Key_B && event.modifiers === Qt.NoModifier && !event.isAutoRepeat) {
+        if (event.key === Qt.Key_B && root.controller.holdCandidate && !event.isAutoRepeat) {
             root.controller.setHoldCandidate(false)
             event.accepted = true
         }
@@ -265,6 +265,7 @@ Item {
                 toolTipText: qsTr("Hold B to inspect the candidate")
                 onPressed: root.controller.setHoldCandidate(true)
                 onReleased: root.controller.setHoldCandidate(false)
+                onCanceled: root.controller.setHoldCandidate(false)
             }
 
             Rectangle {
@@ -470,6 +471,7 @@ Item {
                 id: comparisonCell
 
                 required property int index
+                readonly property int displayedSlot: root.controller.holdCandidate && index === 0 ? 1 : index
                 property var navigationData: {
                     if (!root.comparisonCanvas)
                         return { "visible": false }
@@ -517,7 +519,7 @@ Item {
                     NavigationThumbnail {
                         anchors.fill: parent
                         anchors.margins: 3
-                        path: root.paths[comparisonCell.index] || ""
+                        path: root.paths[comparisonCell.displayedSlot] || ""
                         sourceSize: Qt.size(90, 65)
                         fillMode: Image.Stretch
                         smooth: root.smoothDisplay
@@ -588,8 +590,7 @@ Item {
                     visible: root.controller.histogramVisible
                     width: Math.min(implicitWidth, comparisonCell.width - 16)
                     height: implicitHeight
-                    slot: root.controller.holdCandidate && comparisonCell.index === 0
-                          ? 1 : comparisonCell.index
+                    slot: comparisonCell.displayedSlot
 
                     Component.onCompleted: {
                         if (visible)

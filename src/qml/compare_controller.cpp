@@ -369,7 +369,7 @@ void CompareController::setHoldCandidate(bool active) {
         active = false;
     if (holdCandidate_ == active) return;
     holdCandidate_ = active;
-    applyHoldFrame();
+    if (canvas_) canvas_->setHoldCandidate(active);
     emit holdCandidateChanged();
     diagnostics::event(diagnostics::Level::Info, diagnostics::render(),
                        QStringLiteral("compare.hold_compare"),
@@ -433,10 +433,6 @@ void CompareController::setThumbnailVisible(bool visible) {
     emit thumbnailVisibleChanged();
 }
 
-void CompareController::applyHoldFrame() {
-    refreshCanvas();
-}
-
 void CompareController::fitAll() {
     if (canvas_) canvas_->fitAll();
 }
@@ -460,13 +456,11 @@ void CompareController::attachCanvas(QObject* object) {
 
 void CompareController::refreshCanvas(int changedSlot, bool resetChangedView) {
     if (!canvas_) return;
-    QVector<ImageFramePtr> displayedFrames = frames_;
-    if (holdCandidate_ && displayedFrames.size() == 2 && displayedFrames.value(1))
-        displayedFrames[0] = displayedFrames.at(1);
-    canvas_->setFrames(displayedFrames, changedSlot, resetChangedView);
+    canvas_->setFrames(frames_, changedSlot, resetChangedView);
     canvas_->setPresentationMode(presentationMode_);
     canvas_->setCompareAmount(splitAmount_);
     canvas_->setSynchronized(synchronized_);
+    canvas_->setHoldCandidate(holdCandidate_);
 }
 
 QVariantList CompareController::pixelTexts(int sourceSlot, int x, int y) const {

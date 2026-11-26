@@ -149,10 +149,13 @@ Popup {
         switch (root.settingsController.updateState) {
         case "checking": return qsTr("Checking GitHub Releases…")
         case "available": return qsTr("Version %1 is available.").arg(root.settingsController.latestVersion)
-        case "downloading": return qsTr("Downloading version %1… %2%").arg(root.settingsController.latestVersion).arg(Math.max(0, root.settingsController.updateDownloadProgress))
+        case "downloading": return root.settingsController.updateDownloadProgress >= 0
+                    ? qsTr("Downloading version %1… %2%").arg(root.settingsController.latestVersion).arg(root.settingsController.updateDownloadProgress)
+                    : qsTr("Downloading version %1…").arg(root.settingsController.latestVersion)
         case "verifying": return qsTr("Verifying the downloaded installer…")
         case "ready": return qsTr("Waiting for file operations to finish…")
         case "installing": return qsTr("Installing and restarting Lumen…")
+        case "downloaded": return qsTr("Version %1 was downloaded. Open the installer to finish updating.").arg(root.settingsController.latestVersion)
         case "latest": return qsTr("You’re up to date. Version %1 is the latest release.").arg(root.settingsController.latestVersion)
         case "error": return root.settingsController.updateError.length > 0
                     ? qsTr("Update failed: %1").arg(root.settingsController.updateError)
@@ -579,7 +582,7 @@ Popup {
             SettingsNotice {
                 objectName: "settingsUpdateStatus"
                 text: root.updateStatusText()
-                severity: root.settingsController && root.settingsController.updateState === "error" ? "error" : root.settingsController && ["latest", "ready"].indexOf(root.settingsController.updateState) >= 0 ? "success" : "info"
+                severity: root.settingsController && root.settingsController.updateState === "error" ? "error" : root.settingsController && ["latest", "ready", "downloaded"].indexOf(root.settingsController.updateState) >= 0 ? "success" : "info"
             }
             Item { width: 1; height: 12 }
             ProgressBar {
@@ -602,15 +605,10 @@ Popup {
                 }
                 SettingsButton {
                     objectName: "viewUpdateButton"
-                    visible: root.settingsController && root.settingsController.updateState === "available"
+                    visible: root.settingsController && ["available", "downloaded"].includes(root.settingsController.updateState)
                     primary: true
                     text: qsTr("View update")
                     onClicked: root.updateDetailsRequested()
-                }
-                SettingsButton {
-                    visible: root.settingsController && root.settingsController.updateState === "error" && root.settingsController.releaseUrl.toString().length > 0
-                    text: qsTr("View release ↗")
-                    onClicked: root.settingsController.openReleasePage()
                 }
             }
         }

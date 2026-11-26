@@ -30,6 +30,10 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStyleHints>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextList>
 #include <QTimer>
 #include <QVersionNumber>
 
@@ -81,9 +85,50 @@ QStringList localAppDirectories() {
 QString platformInstallerSuffix() {
 #if defined(Q_OS_WIN)
     return QStringLiteral("-windows-x64-setup.exe");
+#elif defined(Q_OS_MACOS) && defined(Q_PROCESSOR_ARM_64)
+    return QStringLiteral("-macos-arm64.dmg");
 #else
     return {};
 #endif
+}
+
+QString formatReleaseNotes(const QString& markdown, const QString& version) {
+    QTextDocument notes;
+    notes.setMarkdown(markdown, QTextDocument::MarkdownFeatures(QTextDocument::MarkdownDialectGitHub) | QTextDocument::MarkdownNoHTML);
+    const QTextBlock first = notes.begin();
+    const QString title = first.text().trimmed();
+    if (first.blockFormat().headingLevel() > 0 &&
+        (title.compare(QStringLiteral("Lumen v") + version, Qt::CaseInsensitive) == 0 ||
+         title.compare(QStringLiteral("Lumen ") + version, Qt::CaseInsensitive) == 0)) {
+        QTextCursor cursor(first);
+        cursor.select(QTextCursor::BlockUnderCursor);
+        cursor.removeSelectedText();
+        cursor.deleteChar();
+    }
+    if (notes.toPlainText().trimmed().isEmpty())
+        return {};
+
+    for (QTextBlock block = notes.begin(); block.isValid(); block = block.next()) {
+        QTextBlockFormat format = block.blockFormat();
+        const bool heading = format.headingLevel() > 0;
+        const bool listItem = block.textList();
+        format.setTopMargin(block == notes.begin() ? 0 : heading ? 18 : listItem ? 4 : 8);
+        format.setBottomMargin(heading ? 6 : 4);
+        format.setLineHeight(120, QTextBlockFormat::ProportionalHeight);
+        QTextCursor cursor(block);
+        cursor.setBlockFormat(format);
+        if (heading) {
+            QTextCharFormat style;
+            style.setProperty(QTextFormat::FontSizeAdjustment, 1);
+            style.setFontWeight(QFont::DemiBold);
+            cursor.select(QTextCursor::BlockUnderCursor);
+            cursor.mergeCharFormat(style);
+        }
+    }
+    // The popup supplies its own font and colors.
+    const QString html = notes.toHtml();
+    const qsizetype body = html.indexOf(QStringLiteral("<body"));
+    return html.mid(html.indexOf(QLatin1Char('>'), body) + 1).section(QStringLiteral("</body>"), 0, 0).trimmed();
 }
 
 #ifdef Q_OS_WIN
@@ -577,14 +622,27 @@ bool AppSettings::automaticUpdateAvailable() const {
     return updateState_ == QStringLiteral("available") && latestVersion_ != ignoredUpdateVersion_;
 }
 
-bool AppSettings::canInstallUpdate() const {
+bool AppSettings::canUseSparkle() const {
 #ifdef MVPVIEW_HAS_SPARKLE
     return isAllowedUpdateUrl(macAppcastUrl_) && MacUpdateDriver::isConfigured();
-#elif defined(Q_OS_WIN)
-    return isAllowedUpdateUrl(installerUrl_) && !expectedInstallerSha256_.isEmpty() &&
-           isInstalledWindowsCopy();
 #else
     return false;
+#endif
+}
+
+bool AppSettings::canDownloadInstaller() const {
+    return isAllowedUpdateUrl(installerUrl_) && !expectedInstallerSha256_.isEmpty();
+}
+
+bool AppSettings::canStartUpdate() const {
+    return canUseSparkle() || canDownloadInstaller();
+}
+
+bool AppSettings::canInstallUpdate() const {
+#ifdef Q_OS_WIN
+    return canDownloadInstaller() && isInstalledWindowsCopy();
+#else
+    return canUseSparkle();
 #endif
 }
 
@@ -654,7 +712,8 @@ void AppSettings::finishUpdateCheck(const QByteArray& releaseData) {
     QSettings().setValue(QLatin1String(kLastUpdateCheckKey), QDateTime::currentDateTimeUtc());
     const QJsonObject release = QJsonDocument::fromJson(releaseData).object();
     const bool showDetails = std::exchange(showUpdateDetails_, false);
-    QString version = release.value(QStringLiteral("tag_name")).toString();
+    const QString tag = release.value(QStringLiteral("tag_name")).toString();
+    QString version = tag;
     while (version.startsWith(QLatin1Char('v'), Qt::CaseInsensitive))
         version.remove(0, 1);
     const QUrl url(release.value(QStringLiteral("html_url")).toString());
@@ -672,7 +731,7 @@ void AppSettings::finishUpdateCheck(const QByteArray& releaseData) {
         return;
     }
 
-    releaseNotes_ = release.value(QStringLiteral("body")).toString().trimmed();
+    releaseNotes_ = formatReleaseNotes(release.value(QStringLiteral("body")).toString(), version);
     const QString suffix = platformInstallerSuffix();
     const QRegularExpression sha256DigestPattern(
         QStringLiteral("^sha256:([0-9a-fA-F]{64})$"));
@@ -685,19 +744,25 @@ void AppSettings::finishUpdateCheck(const QByteArray& releaseData) {
 #ifdef MVPVIEW_HAS_SPARKLE
         if (name == QStringLiteral("lumen-appcast.xml") &&
             downloadUrl == repositoryUrl(QStringLiteral("/releases/download/%1/lumen-appcast.xml")
-                                             .arg(release.value(QStringLiteral("tag_name")).toString()))) {
+                                             .arg(tag))) {
             macAppcastUrl_ = downloadUrl;
         }
 #endif
+        bool matchesDownloadUrl = downloadUrl ==
+            repositoryUrl(QStringLiteral("/releases/download/%1/%2").arg(tag, name));
+#ifndef NDEBUG
+        matchesDownloadUrl = matchesDownloadUrl || qEnvironmentVariableIsSet("MVPVIEW_UPDATE_API_URL");
+#endif
         if (!suffix.isEmpty() && name.endsWith(suffix, Qt::CaseInsensitive) &&
-            QFileInfo(name).fileName() == name) {
+            QFileInfo(name).fileName() == name && matchesDownloadUrl) {
+            const QRegularExpressionMatch digestMatch = sha256DigestPattern.match(
+                asset.value(QStringLiteral("digest")).toString());
+            if (!digestMatch.hasMatch() || !isAllowedUpdateUrl(downloadUrl))
+                continue;
             installerAssetName_ = name;
             installerUrl_ = downloadUrl;
             installerAssetSize_ = asset.value(QStringLiteral("size")).toInteger();
-            const QRegularExpressionMatch digestMatch = sha256DigestPattern.match(
-                asset.value(QStringLiteral("digest")).toString());
-            expectedInstallerSha256_ =
-                digestMatch.hasMatch() ? digestMatch.captured(1).toLower() : QString{};
+            expectedInstallerSha256_ = digestMatch.captured(1).toLower();
         }
     }
     setUpdateState(QStringLiteral("available"), version, url);
@@ -712,14 +777,17 @@ void AppSettings::ignoreUpdate() {
 }
 
 void AppSettings::startUpdate() {
-    if (updateState_ != QStringLiteral("available") || !canInstallUpdate()) return;
+    if ((updateState_ != QStringLiteral("available") && updateState_ != QStringLiteral("error")) ||
+        !canStartUpdate())
+        return;
     cancelUpdateRequested_ = false;
     updateError_.clear();
     updateDownloadProgress_ = -1;
+    clearDownloadedUpdate();
     setUpdateState(QStringLiteral("downloading"), latestVersion_, releaseUrl_);
 #ifdef MVPVIEW_HAS_SPARKLE
-    if (!macUpdate_) {
-        macUpdate_ = std::make_unique<MacUpdateDriver>(
+    if (canUseSparkle()) {
+        if (!macUpdate_) macUpdate_ = std::make_unique<MacUpdateDriver>(
             [this](int progress) {
                 updateDownloadProgress_ = progress;
                 emit updateStateChanged();
@@ -736,25 +804,33 @@ void AppSettings::startUpdate() {
                     failUpdate(error);
                 }
             });
+        macUpdate_->start(macAppcastUrl_, latestVersion_);
+        return;
     }
-    macUpdate_->start(macAppcastUrl_, latestVersion_);
-#elif defined(Q_OS_WIN)
-    if (!networkManager_) networkManager_ = new QNetworkAccessManager(this);
-    beginInstallerDownload();
 #endif
+    // Start the network request after the update state change has reached QML.
+    QTimer::singleShot(0, this, [this] {
+        if (cancelUpdateRequested_) {
+            cancelUpdateRequested_ = false;
+            setUpdateState(QStringLiteral("available"), latestVersion_, releaseUrl_);
+            return;
+        }
+        if (!networkManager_) networkManager_ = new QNetworkAccessManager(this);
+        beginInstallerDownload();
+    });
 }
 
 void AppSettings::beginInstallerDownload() {
     const QString cacheRoot = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
     const QString updateDirectory = QDir(cacheRoot).filePath(QStringLiteral("updates"));
     if (cacheRoot.isEmpty() || !QDir().mkpath(updateDirectory)) {
-        failUpdate(QCoreApplication::translate("UpdateErrors", "Could not create the update folder. Try downloading from the release page."));
+        failUpdate(QCoreApplication::translate("UpdateErrors", "Could not create the update folder."));
         return;
     }
     const QString targetPath = QDir(updateDirectory).filePath(installerAssetName_);
     updateFile_ = std::make_unique<QSaveFile>(targetPath);
     if (!updateFile_->open(QIODevice::WriteOnly)) {
-        failUpdate(QCoreApplication::translate("UpdateErrors", "Could not save the installer. Try downloading from the release page. Details: %1").arg(updateFile_->errorString()));
+        failUpdate(QCoreApplication::translate("UpdateErrors", "Could not save the installer. Details: %1").arg(updateFile_->errorString()));
         return;
     }
     updateHash_ = std::make_unique<QCryptographicHash>(QCryptographicHash::Sha256);
@@ -773,7 +849,7 @@ void AppSettings::beginInstallerDownload() {
         if (chunk.isEmpty() || !updateFile_ || !updateHash_)
             return;
         if (updateFile_->write(chunk) != chunk.size()) {
-            updateError_ = QCoreApplication::translate("UpdateErrors", "Could not save the installer. Try downloading from the release page. Details: %1").arg(updateFile_->errorString());
+            updateError_ = QCoreApplication::translate("UpdateErrors", "Could not save the installer. Details: %1").arg(updateFile_->errorString());
             reply->abort();
             return;
         }
@@ -816,14 +892,15 @@ void AppSettings::beginInstallerDownload() {
             return;
         }
         if (!updateFile_->commit()) {
-            failUpdate(QCoreApplication::translate("UpdateErrors", "Could not save the installer. Try downloading from the release page. Details: %1").arg(updateFile_->errorString()));
+            failUpdate(QCoreApplication::translate("UpdateErrors", "Could not save the installer. Details: %1").arg(updateFile_->errorString()));
             return;
         }
         updateFile_.reset();
         updateHash_.reset();
         downloadedUpdatePath_ = targetPath;
         updateDownloadProgress_ = 100;
-        setUpdateState(QStringLiteral("ready"), latestVersion_, releaseUrl_);
+        setUpdateState(canInstallUpdate() ? QStringLiteral("ready") : QStringLiteral("downloaded"),
+                       latestVersion_, releaseUrl_);
     });
 }
 
@@ -831,11 +908,25 @@ void AppSettings::cancelUpdateDownload() {
     if (updateState_ != QStringLiteral("downloading")) return;
     cancelUpdateRequested_ = true;
 #ifdef MVPVIEW_HAS_SPARKLE
-    if (macUpdate_) macUpdate_->cancel();
-#else
+    if (canUseSparkle() && macUpdate_) {
+        macUpdate_->cancel();
+        return;
+    }
+#endif
     if (activeUpdateReply_)
         activeUpdateReply_->abort();
+}
+
+void AppSettings::openDownloadedUpdate() {
+    if (updateState_ != QStringLiteral("downloaded")) return;
+    const bool exists = QFileInfo(downloadedUpdatePath_).isFile();
+#ifdef Q_OS_WIN
+    const bool opened = exists && QProcess::startDetached(downloadedUpdatePath_, {});
+#else
+    const bool opened = exists && QDesktopServices::openUrl(QUrl::fromLocalFile(downloadedUpdatePath_));
 #endif
+    if (!opened)
+        failUpdate(QCoreApplication::translate("UpdateErrors", "Could not open the downloaded installer. Try downloading it again."));
 }
 
 void AppSettings::installPreparedUpdate() {
@@ -849,7 +940,7 @@ void AppSettings::installPreparedUpdate() {
         !QProcess::startDetached(downloadedUpdatePath_,
                                  {QStringLiteral("/S"),
                                   QStringLiteral("/UPDATEPID=%1").arg(QCoreApplication::applicationPid())})) {
-        failUpdate(QCoreApplication::translate("UpdateErrors", "Could not start the update installer. Try again or open the release page."));
+        failUpdate(QCoreApplication::translate("UpdateErrors", "Could not start the update installer. Try again."));
         return;
     }
     rememberPendingUpdate();
@@ -893,13 +984,6 @@ bool AppSettings::isAllowedUpdateUrl(const QUrl& url) const {
 #else
     return false;
 #endif
-}
-
-void AppSettings::openReleasePage() const {
-    const QUrl url =
-        releaseUrl_.isValid() ? releaseUrl_ : repositoryUrl(QStringLiteral("/releases"));
-    if (url.isValid())
-        QDesktopServices::openUrl(url);
 }
 
 void AppSettings::openRepository() const {

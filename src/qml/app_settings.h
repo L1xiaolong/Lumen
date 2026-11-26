@@ -61,6 +61,7 @@ class AppSettings final : public QObject {
     Q_PROPERTY(QUrl releaseUrl READ releaseUrl NOTIFY updateStateChanged)
     Q_PROPERTY(QString releaseNotes READ releaseNotes NOTIFY updateStateChanged)
     Q_PROPERTY(bool automaticUpdateAvailable READ automaticUpdateAvailable NOTIFY updateStateChanged)
+    Q_PROPERTY(bool canStartUpdate READ canStartUpdate NOTIFY updateStateChanged)
     Q_PROPERTY(bool canInstallUpdate READ canInstallUpdate NOTIFY updateStateChanged)
     Q_PROPERTY(QString installedUpdateVersion READ installedUpdateVersion CONSTANT)
     Q_PROPERTY(int updateDownloadProgress READ updateDownloadProgress NOTIFY updateStateChanged)
@@ -97,6 +98,7 @@ class AppSettings final : public QObject {
     [[nodiscard]] QUrl releaseUrl() const;
     [[nodiscard]] QString releaseNotes() const { return releaseNotes_; }
     [[nodiscard]] bool automaticUpdateAvailable() const;
+    [[nodiscard]] bool canStartUpdate() const;
     [[nodiscard]] bool canInstallUpdate() const;
     [[nodiscard]] QString installedUpdateVersion() const { return installedUpdateVersion_; }
     [[nodiscard]] int updateDownloadProgress() const;
@@ -141,8 +143,8 @@ class AppSettings final : public QObject {
     Q_INVOKABLE void startUpdate();
     Q_INVOKABLE void ignoreUpdate();
     Q_INVOKABLE void cancelUpdateDownload();
+    Q_INVOKABLE void openDownloadedUpdate();
     void installPreparedUpdate();
-    Q_INVOKABLE void openReleasePage() const;
     Q_INVOKABLE void openRepository() const;
     Q_INVOKABLE void restoreDefaults();
     // A full local reset is finalized only after the application and diagnostics service have
@@ -175,6 +177,8 @@ class AppSettings final : public QObject {
     void failUpdate(const QString& error);
     void clearDownloadedUpdate();
     void rememberPendingUpdate();
+    [[nodiscard]] bool canDownloadInstaller() const;
+    [[nodiscard]] bool canUseSparkle() const;
     [[nodiscard]] bool isAllowedUpdateUrl(const QUrl& url) const;
     [[nodiscard]] static QString normalizedShortcut(const QString& sequence);
     [[nodiscard]] static QString normalizedLanguage(const QString& language);

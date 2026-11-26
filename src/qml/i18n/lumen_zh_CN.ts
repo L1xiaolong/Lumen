@@ -1756,11 +1756,6 @@ Choose another folder or drop images here</source>
         <translation>版本状态</translation>
     </message>
     <message>
-        <location filename="../Mvp/SettingsCard.qml" line="519"/>
-        <source>View release ↗</source>
-        <translation>查看发布页 ↗</translation>
-    </message>
-    <message>
         <source>Choose a folder, then use grid, list, or gallery view to inspect files.</source>
         <translation type="vanished">选择文件夹，使用网格、列表或画廊视图浏览文件。</translation>
     </message>
@@ -2550,6 +2545,14 @@ Choose another folder or drop images here</source>
     <message>
         <source>Restore the last opened folder</source>
         <translation>恢复上次打开的文件夹</translation>
+    </message>
+    <message>
+        <source>Downloading version %1…</source>
+        <translation>正在下载版本 %1…</translation>
+    </message>
+    <message>
+        <source>Version %1 was downloaded. Open the installer to finish updating.</source>
+        <translation>已下载版本 %1。打开安装包以完成更新。</translation>
     </message>
 </context>
 <context>
@@ -4612,10 +4615,6 @@ Returned to the previous folder.</source>
         <translation>更新失败</translation>
     </message>
     <message>
-        <source>Lumen %1 is available</source>
-        <translation>Lumen %1 已发布</translation>
-    </message>
-    <message>
         <source>Updating Lumen</source>
         <translation>更新 Lumen</translation>
     </message>
@@ -4634,14 +4633,6 @@ Returned to the previous folder.</source>
     <message>
         <source>Checking for updates…</source>
         <translation>正在检查更新…</translation>
-    </message>
-    <message>
-        <source>Downloading… %1%</source>
-        <translation>正在下载… %1%</translation>
-    </message>
-    <message>
-        <source>Downloading…</source>
-        <translation>正在下载…</translation>
     </message>
     <message>
         <source>Verifying the update…</source>
@@ -4668,24 +4659,12 @@ Returned to the previous folder.</source>
         <translation>更新就绪后，Lumen 将自动重启。</translation>
     </message>
     <message>
-        <source>Open the release page to download this update.</source>
-        <translation>请打开发布页下载此更新。</translation>
-    </message>
-    <message>
         <source>Update progress</source>
         <translation>更新进度</translation>
     </message>
     <message>
-        <source>Update and restart</source>
-        <translation>更新并重启</translation>
-    </message>
-    <message>
         <source>Try again</source>
         <translation>重试</translation>
-    </message>
-    <message>
-        <source>Open release page</source>
-        <translation>打开发布页</translation>
     </message>
     <message>
         <source>Skip this version</source>
@@ -4695,16 +4674,56 @@ Returned to the previous folder.</source>
         <source>Cancel download</source>
         <translation>取消下载</translation>
     </message>
+    <message>
+        <source>Lumen %1 is available</source>
+        <translation>Lumen %1 可更新</translation>
+    </message>
+    <message>
+        <source>What’s new</source>
+        <translation>更新内容</translation>
+    </message>
+    <message>
+        <source>Version %1</source>
+        <translation>版本 %1</translation>
+    </message>
+    <message>
+        <source>Download complete</source>
+        <translation>下载完成</translation>
+    </message>
+    <message>
+        <source>Downloading update…</source>
+        <translation>正在下载更新…</translation>
+    </message>
+    <message>
+        <source>%1%</source>
+        <translation>%1%</translation>
+    </message>
+    <message>
+        <source>No compatible installer is available for this version.</source>
+        <translation>此版本暂无适用于当前系统且可验证的安装包。</translation>
+    </message>
+    <message>
+        <source>The installer will be ready to open after downloading.</source>
+        <translation>下载完成后，可打开安装包继续更新。</translation>
+    </message>
+    <message>
+        <source>Open the installer to finish updating Lumen.</source>
+        <translation>打开安装包以完成更新。</translation>
+    </message>
+    <message>
+        <source>Update now</source>
+        <translation>现在更新</translation>
+    </message>
+    <message>
+        <source>Open installer</source>
+        <translation>打开安装包</translation>
+    </message>
 </context>
 <context>
     <name>UpdateErrors</name>
     <message>
         <source>The new version did not start. Try updating again.</source>
         <translation>新版本未能启动，请重试更新。</translation>
-    </message>
-    <message>
-        <source>Could not start the update installer. Try again or open the release page.</source>
-        <translation>无法启动更新安装程序。请重试，或打开发布页手动更新。</translation>
     </message>
     <message>
         <source>The update feed does not match this release. Check for updates again.</source>
@@ -4719,28 +4738,28 @@ Returned to the previous folder.</source>
         <translation>正在更新，请稍候。</translation>
     </message>
     <message>
-        <source>This release has no compatible installer that can be verified. Open the release page for available downloads.</source>
-        <translation>此版本没有适用于当前系统且可验证的安装包，请查看发布页中的下载文件。</translation>
-    </message>
-    <message>
-        <source>Could not create the update folder. Try downloading from the release page.</source>
-        <translation>无法创建更新文件夹，请尝试从发布页下载安装包。</translation>
-    </message>
-    <message>
         <source>The installer failed SHA-256 verification. Download it again.</source>
         <translation>安装包未通过 SHA-256 校验，请重新下载。</translation>
     </message>
     <message>
-        <source>Could not open the installer. Download it from the release page and open it manually.</source>
-        <translation>无法打开安装包，请从发布页下载后手动打开。</translation>
-    </message>
-    <message>
-        <source>Could not save the installer. Try downloading from the release page. Details: %1</source>
-        <translation>无法保存安装包，请尝试从发布页下载。详细信息：%1</translation>
-    </message>
-    <message>
         <source>Download failed. Check your connection and try again. Details: %1</source>
         <translation>下载失败，请检查网络连接后重试。详细信息：%1</translation>
+    </message>
+    <message>
+        <source>Could not start the update installer. Try again.</source>
+        <translation>无法启动更新安装程序，请重试。</translation>
+    </message>
+    <message>
+        <source>Could not create the update folder.</source>
+        <translation>无法创建更新文件夹。</translation>
+    </message>
+    <message>
+        <source>Could not open the downloaded installer. Try downloading it again.</source>
+        <translation>无法打开已下载的安装包，请重新下载。</translation>
+    </message>
+    <message>
+        <source>Could not save the installer. Details: %1</source>
+        <translation>无法保存安装包。详细信息：%1</translation>
     </message>
 </context>
 <context>

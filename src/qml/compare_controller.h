@@ -99,7 +99,6 @@ class CompareController final : public QObject {
     void requestMetadata(int slot);
     void requestAutomaticFullFrames();
     void ensureFullFrames();
-    void applyHoldFrame();
     void refreshCanvas(int changedSlot = -1, bool resetChangedView = false);
     void clearHistograms(int slot);
     void completeHistogram(int slot, quint64 generation, QVariantMap value);
