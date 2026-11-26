@@ -4,6 +4,7 @@
 #include "browser/thumbnail_filter_proxy_model.h"
 #include "io/image_loader.h"
 #include "io/directory_scanner.h"
+#include "io/directory_snapshot_store.h"
 
 #include <QFileSystemModel>
 #include <QModelIndex>
@@ -153,6 +154,13 @@ class BrowseController final : public QObject {
     Q_INVOKABLE void setThumbnailViewport(const QString& owner, const QVariantList& entries, bool fast);
     Q_INVOKABLE int thumbnailIndexForPath(const QString& path) const;
     Q_INVOKABLE void setFilterText(const QString& text);
+    // Remembers where the user is in the current folder so the next launch reopens that spot.
+    // Called from the QML grid as the offset changes; only the in-memory entry updates, the
+    // persisted map is rewritten on navigation and shutdown.
+    Q_INVOKABLE void rememberViewportScroll(qreal offset);
+    // Returns the saved offset for the current folder exactly once per launch (startup folder
+    // only), or -1 when nothing should be restored.
+    Q_INVOKABLE qreal consumeSavedViewportScroll();
     Q_INVOKABLE void setSortMode(int mode);
     Q_INVOKABLE void setDisplayMode(int mode);
     Q_INVOKABLE QString createFolder(const QString& name);
@@ -214,14 +222,20 @@ class BrowseController final : public QObject {
     void transformFinished(const QString& path, const QString& error);
     void directoryOpenFailed(const QString& path, const QString& message);
     void recentDirectoryMissing(const QString& path);
+    // The listing currently shown has been fully applied: every scanned or snapshotted batch is
+    // in the model and a reconcile scan, when one is running, will merge its results from here.
+    void contentSettled();
 
   private:
     void openDirectoryInternal(const QString& path, bool addToHistory,
                                bool pathAlreadyValidated = false,
                                std::optional<QVector<ImageFileRecord>> preparedFiles = std::nullopt,
-                               bool fromRecents = false);
+                               bool fromRecents = false,
+                               std::optional<QVector<ImageFileRecord>> snapshotFiles = std::nullopt);
     void failNetworkDirectory(bool timedOut);
     void rescanCurrentDirectory();
+    void registerPendingDirectoryWatcher();
+    void persistViewportScrollPositions();
     void setStatusText(const QString& text);
     void requestGalleryFull();
     void applyGalleryFrame(const ImageFramePtr& frame, bool fullResolution);
@@ -275,6 +289,16 @@ class BrowseController final : public QObject {
     quint64 scanGeneration_ = 0;
     quint64 directoryRequestGeneration_ = 0;
     bool incrementalScan_ = false;
+    // Snapshot restore state: rows stream in from the snapshot first, then one reconcile scan
+    // replaces stale entries. A rescan requested mid-drain waits instead of merging against a
+    // partially applied listing, which would duplicate the undrained rows.
+    DirectorySnapshotStore snapshotStore_;
+    bool snapshotReconcilePending_ = false;
+    bool rescanAfterDrain_ = false;
+    QString pendingWatcherDirectory_;
+    QHash<QString, qreal> viewportScrollPositions_;
+    bool startupScrollRestorePending_ = false;
+    QString startupScrollRestoreDirectory_;
     quint64 galleryRequestId_ = 0;
     int gridCellWidth_ = 144;
     QString pendingActivationPath_;

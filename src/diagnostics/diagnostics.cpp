@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -592,6 +593,15 @@ QStringList Service::skippedSessions() const {
 void event(Level level, const QLoggingCategory& category, const QString& name, const QJsonObject& context, bool breadcrumb) {
     std::shared_lock lock(globalMutex);
     if (current) current->record(level, category.categoryName(), name, context, breadcrumb);
+}
+qint64 startupElapsedMs() {
+    // main() performs the first call before any startup work, anchoring the shared timeline.
+    static const QElapsedTimer clock = [] { QElapsedTimer started; started.start(); return started; }();
+    return clock.elapsed();
+}
+QJsonObject startupContext(QJsonObject context) {
+    context.insert(QStringLiteral("elapsedMs"), startupElapsedMs());
+    return context;
 }
 QString fileId(const QString& path) {
     std::shared_lock lock(globalMutex); return current ? current->fileId(path) : QStringLiteral("untracked");

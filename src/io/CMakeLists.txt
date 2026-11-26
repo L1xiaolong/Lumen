@@ -72,6 +72,8 @@ qt_add_library(mvpview_io STATIC
     encoded_color_management.h
     directory_scanner.h
     directory_scanner.cpp
+    directory_snapshot_store.h
+    directory_snapshot_store.cpp
     image_loader.h
     image_loader.cpp
     image_transformer.h

@@ -18,6 +18,9 @@ Rectangle {
                                   settingsController.smoothDisplay === undefined)
                                  ? true : settingsController.smoothDisplay
     property string inspectorMode: ""
+    // Stays false until the first inspector request; the panels are created by their loaders
+    // at that point and then kept alive, exactly like they were permanent children before.
+    property bool inspectorUsed: false
     readonly property bool propertiesVisible: inspectorMode === "properties"
     readonly property bool rawParametersVisible: inspectorMode === "raw"
     readonly property bool inspectorVisible: inspectorMode.length > 0
@@ -26,17 +29,25 @@ Rectangle {
         width - 418 - (navigatorVisible ? 200 : 0)))
     readonly property real effectiveInspectorWidth: inspectorVisible
         ? Math.min(inspectorWidth, inspectorMaximumWidth) : 0
+    function finishRawParameterEditing() {
+        const panel = rawParametersPanelLoader.item
+        if (panel) panel.finishEditing()
+    }
     function showProperties() {
-        rawParametersPanel.finishEditing()
+        inspectorUsed = true
+        finishRawParameterEditing()
         inspectorMode = "properties"
-        propertiesPanel.synchronize()
+        const panel = propertiesPanelLoader.item
+        if (panel) panel.synchronize()
     }
     function showRawParameters() {
+        inspectorUsed = true
         inspectorMode = "raw"
-        rawParametersPanel.synchronize()
+        const panel = rawParametersPanelLoader.item
+        if (panel) panel.synchronize()
     }
     function closeInspector() {
-        rawParametersPanel.finishEditing()
+        finishRawParameterEditing()
         inspectorMode = ""
         const pane = paneLayoutLoader.item
         if (pane) pane.forceActiveFocus()
@@ -59,7 +70,8 @@ Rectangle {
     // Use visible, not opened: block input throughout popup enter/exit transitions.
     property bool externalModalVisible: false
     readonly property bool contentInteractionEnabled: root.visible && !externalModalVisible &&
-                                                       !rawParametersPanel.blockingPopupVisible &&
+                                                       !(rawParametersPanelLoader.item &&
+                                                         rawParametersPanelLoader.item.blockingPopupVisible) &&
                                                        !imageResizeDialog.visible &&
                                                        !newFolderDialog.visible &&
                                                        !renameDialog.visible &&
@@ -71,8 +83,10 @@ Rectangle {
     readonly property bool fileShortcutsEnabled: (workspaceController.hasActivePane === undefined ||
                                                   workspaceController.hasActivePane) &&
                                                   !shortcutContext.textInputFocused &&
-                                                  !propertiesPanel.textSelectionActive &&
-                                                  !(root.rawParametersVisible && rawParametersPanel.inputFocused) &&
+                                                  !(propertiesPanelLoader.item &&
+                                                    propertiesPanelLoader.item.textSelectionActive) &&
+                                                  !(root.rawParametersVisible && rawParametersPanelLoader.item &&
+                                                    rawParametersPanelLoader.item.inputFocused) &&
                                                   root.contentInteractionEnabled
     ShortcutContext { id: shortcutContext; targetWindow: root.Window.window }
     function pathIsRaw(path) {
@@ -1677,30 +1691,45 @@ Rectangle {
         anchors.top: toolbar.bottom
         anchors.bottom: statusRail.top
         width: root.effectiveInspectorWidth
-        ImagePropertiesPanel {
-            id: propertiesPanel
+        // Both inspectors are created on first use and stay alive afterwards. Their histogram,
+        // EXIF and parameter editors are pure startup cost for the common launch that opens no
+        // inspector, so nothing instantiates them until showProperties()/showRawParameters().
+        Loader {
+            id: propertiesPanelLoader
             anchors.fill: parent
-            visible: root.propertiesVisible
-            inspectionActive: visible && root.visible
-            browseController: root.controller
-            hasActivePane: root.workspaceController.hasActivePane === undefined || root.workspaceController.hasActivePane
-            controller: root.propertiesController
-            iconPrefix: root.iconPrefix
-            enabled: !root.externalModalVisible
-            onCloseRequested: root.closeInspector()
+            active: root.inspectorUsed
+            sourceComponent: Component {
+                ImagePropertiesPanel {
+                    anchors.fill: parent
+                    visible: root.propertiesVisible
+                    inspectionActive: visible && root.visible
+                    browseController: root.controller
+                    hasActivePane: root.workspaceController.hasActivePane === undefined || root.workspaceController.hasActivePane
+                    controller: root.propertiesController
+                    iconPrefix: root.iconPrefix
+                    enabled: !root.externalModalVisible
+                    onCloseRequested: root.closeInspector()
+                }
+            }
         }
-        RawParametersPanel {
-            id: rawParametersPanel
+        Loader {
+            id: rawParametersPanelLoader
             anchors.fill: parent
-            visible: root.rawParametersVisible
-            inspectionActive: visible && root.visible
-            browseController: root.controller
-            hasActivePane: root.workspaceController.hasActivePane === undefined || root.workspaceController.hasActivePane
-            controller: root.rawController
-            modalParent: root
-            iconPrefix: root.iconPrefix
-            enabled: !root.externalModalVisible
-            onCloseRequested: root.closeInspector()
+            active: root.inspectorUsed
+            sourceComponent: Component {
+                RawParametersPanel {
+                    anchors.fill: parent
+                    visible: root.rawParametersVisible
+                    inspectionActive: visible && root.visible
+                    browseController: root.controller
+                    hasActivePane: root.workspaceController.hasActivePane === undefined || root.workspaceController.hasActivePane
+                    controller: root.rawController
+                    modalParent: root
+                    iconPrefix: root.iconPrefix
+                    enabled: !root.externalModalVisible
+                    onCloseRequested: root.closeInspector()
+                }
+            }
         }
     }
     Rectangle {

@@ -23,9 +23,11 @@ ApplicationWindow {
     topPadding: 0
     readonly property real unifiedTitleBarHeight: windowChrome.supported ? 44 : 0
     readonly property rect titleBarLeftControls: showingCompare && comparePage
-        ? comparePage.titleBarLeftControls : browsePage.titleBarLeftControls
+        ? comparePage.titleBarLeftControls
+        : browsePage ? browsePage.titleBarLeftControls : Qt.rect(0, 0, 0, 0)
     readonly property rect titleBarRightControls: showingCompare && comparePage
-        ? comparePage.titleBarRightControls : browsePage.titleBarRightControls
+        ? comparePage.titleBarRightControls
+        : browsePage ? browsePage.titleBarRightControls : Qt.rect(0, 0, 0, 0)
     color: Theme.sensorWhite
     palette.window: Theme.sensorWhite
     palette.windowText: Theme.graphiteInk
@@ -45,6 +47,18 @@ ApplicationWindow {
     property var comparePage: compareLoader.item
     property var fullScreenPage: fullScreenLoader.item
     property var settingsCard: settingsLoader.item
+    // The browse page composes asynchronously after the window is on screen, so the first
+    // frame presents the shell immediately instead of waiting for the whole workspace.
+    property var browsePage: browseLoader.item
+    property bool browseActivated: false
+    // Any of the three notice sources can require the notices column: an installed-update
+    // banner, a diagnostic report from the previous session, or an asynchronously discovered
+    // update. When none can, the column's whole subtree stays uninstantiated.
+    readonly property bool noticeContentPossible:
+        appSettings.installedUpdateVersion.length > 0 ||
+        (typeof diagnosticsController !== "undefined" &&
+         diagnosticsController.previousExit.length > 0) ||
+        appSettings.automaticUpdateAvailable
     readonly property bool modalVisible: updateDialog.visible || (settingsCard && settingsCard.visible)
     property var pendingComparePaths: []
     property int pendingSettingsSection: 0
@@ -160,7 +174,7 @@ ApplicationWindow {
         compareController.setHoldCandidate(false)
         compareController.closeSession()
         showingCompare = false
-        Qt.callLater(function() { browsePage.forceActiveFocus() })
+        Qt.callLater(function() { if (browsePage) browsePage.forceActiveFocus() })
     }
 
     function closeFullScreen() {
@@ -183,7 +197,7 @@ ApplicationWindow {
         }
         fullScreenUsesWindow = false
         browseController.refreshAll()
-        Qt.callLater(function() { browsePage.forceActiveFocus() })
+        Qt.callLater(function() { if (browsePage) browsePage.forceActiveFocus() })
     }
 
     function beginApplicationExit() {
@@ -277,24 +291,39 @@ ApplicationWindow {
         }
     }
 
-    BrowsePage {
-        id: browsePage
+    // The browse page is the largest QML subtree in the application. Composing it after the
+    // window is on screen lets the first frame present the shell immediately; the workspace
+    // then appears chunk by chunk (asynchronous Loader) instead of delaying the window itself.
+    // Activation latches once: hiding the browser window during a full-screen presentation
+    // must never destroy the page that owns scroll positions and inspector state.
+    Loader {
+        id: browseLoader
         anchors.fill: parent
-        titleBarHeight: window.unifiedTitleBarHeight || Theme.toolbarHeight
-        captionButtonsWidth: windowChrome.captionButtonsWidth
-        controller: browseController.activePane
-        enabled: !window.fullScreenUsesWindow
-        workspaceController: browseController
-        propertiesController: imagePropertiesController
-        rawController: rawParametersController
-        settingsController: appSettings
+        active: window.browseActivated
+        asynchronous: typeof uiTestSynchronousStartup === "undefined" || !uiTestSynchronousStartup
         visible: !window.showingCompare && (!window.showingFullScreen || window.fullScreenUsesWindow)
-        externalModalVisible: window.modalVisible
-        onFullScreenRequested: function(paths, initialIndex) {
-            window.openFullScreen(paths, initialIndex)
+        sourceComponent: Component {
+            BrowsePage {
+                id: browsePage
+                anchors.fill: parent
+                titleBarHeight: window.unifiedTitleBarHeight || Theme.toolbarHeight
+                captionButtonsWidth: windowChrome.captionButtonsWidth
+                controller: browseController.activePane
+                enabled: !window.fullScreenUsesWindow
+                workspaceController: browseController
+                propertiesController: imagePropertiesController
+                rawController: rawParametersController
+                settingsController: appSettings
+                visible: !window.showingCompare && (!window.showingFullScreen || window.fullScreenUsesWindow)
+                externalModalVisible: window.modalVisible
+                onFullScreenRequested: function(paths, initialIndex) {
+                    window.openFullScreen(paths, initialIndex)
+                }
+                onSettingsRequested: window.openSettings()
+            }
         }
-        onSettingsRequested: window.openSettings()
     }
+    onVisibleChanged: if (visible) browseActivated = true
     WindowCaptionButtons {
         objectName: "windowCaptionButtons"
         anchors.top: parent.top
@@ -358,7 +387,12 @@ ApplicationWindow {
         function onFilesystemChanged() { browseController.refreshAll() }
     }
 
-    ApplicationNotices {
+    // The notices column instantiates only when a notice can actually appear. Its Texts,
+    // buttons and icons would otherwise pay the first-text and first-button initialization
+    // cost on the startup critical path for every launch that shows no notice at all.
+    // Activation is a superset of the internal visibility rules: the update state can flip
+    // asynchronously once the delayed update check finishes, so the binding stays live.
+    Loader {
         objectName: "applicationNotices"
         parent: window.presentationWindow.contentItem
         anchors.right: parent.right
@@ -367,12 +401,17 @@ ApplicationWindow {
         anchors.bottomMargin: 48
         width: Math.min(380, parent.width - 32)
         z: 100
-        visible: !window.fullScreenTransitioning
-        updatesVisible: !window.showingFullScreen && !window.modalVisible
-        settingsController: appSettings
-        diagnostics: typeof diagnosticsController !== "undefined" ? diagnosticsController : null
-        onDiagnosticsRequested: window.openSettings(4)
-        onUpdatesRequested: updateDialog.open()
+        active: window.noticeContentPossible
+        visible: active && !window.fullScreenTransitioning
+        sourceComponent: Component {
+            ApplicationNotices {
+                updatesVisible: !window.showingFullScreen && !window.modalVisible
+                settingsController: appSettings
+                diagnostics: typeof diagnosticsController !== "undefined" ? diagnosticsController : null
+                onDiagnosticsRequested: window.openSettings(4)
+                onUpdatesRequested: updateDialog.open()
+            }
+        }
     }
 
     UpdateDialog {

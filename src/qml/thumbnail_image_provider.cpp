@@ -2,6 +2,7 @@
 #include "qml/accounted_texture_factory.h"
 
 #include "core/raw_image_parameters.h"
+#include "diagnostics/diagnostics.h"
 #include "io/image_decoder.h"
 #include "io/image_loader.h"
 
@@ -128,6 +129,12 @@ class ThumbnailImageResponse final : public QQuickImageResponse {
         if (finished_ || cancelled_.load(std::memory_order_relaxed)) return;
         QImage image;
         if (result.frame && result.frame->qImage()) image = *result.frame->qImage();
+        if (!image.isNull() && !firstReadyLogged_.exchange(true)) {
+            // The first decoded thumbnail marks the end of the perceived startup path:
+            // click, window, first frame, folder content, first image on screen.
+            mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::decode(),
+                QStringLiteral("thumbnail.first_ready"), mvpview::diagnostics::startupContext(), true);
+        }
         if (image.isNull()) {
             image = placeholder(result.rawParametersRequired ? result.error
                                                              : QStringLiteral("Preview unavailable"),
@@ -152,6 +159,7 @@ class ThumbnailImageResponse final : public QQuickImageResponse {
     PixelMemoryOwnership imageOwnership_;
     std::atomic_bool cancelled_{false};
     inline static std::atomic<quint64> requestCounter_{0};
+    inline static std::atomic_bool firstReadyLogged_{false};
 };
 } // namespace
 

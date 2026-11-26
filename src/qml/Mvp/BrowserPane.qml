@@ -234,6 +234,25 @@ Rectangle {
         cacheBuffer: Math.max(0, height)
         keyNavigationEnabled: root.active
         activeFocusOnTab: true
+        onContentYChanged: if (!moving) root.controller.rememberViewportScroll(contentY)
+        onMovementEnded: root.controller.rememberViewportScroll(contentY)
+        Component.onCompleted: tryRestoreStartupScroll()
+        Connections {
+            target: root.controller
+            function onContentSettled() { tryRestoreStartupScroll() }
+        }
+        // Restore exactly once per launch, for the startup folder. Whichever arrives later
+        // wins: the asynchronously composed pane, or the settle signal of its content.
+        function tryRestoreStartupScroll() {
+            if (contactSheet.count === 0 || !contactSheet.atYBeginning) return
+            const saved = root.controller.consumeSavedViewportScroll()
+            if (saved <= 0) return
+            contactSheet.cancelFlick()
+            contactSheet.forceLayout()
+            const maximum = Math.max(contactSheet.originY,
+                                      contactSheet.contentHeight - contactSheet.height)
+            contactSheet.contentY = Math.max(contactSheet.originY, Math.min(saved, maximum))
+        }
         property bool keyboardNavigating: false
         readonly property bool keyboardFocusVisible: activeFocus && keyboardNavigating
         function isBlankAt(x, y) {

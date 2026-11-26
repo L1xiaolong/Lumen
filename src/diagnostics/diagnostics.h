@@ -79,6 +79,13 @@ private:
 
 void event(Level level, const QLoggingCategory& category, const QString& name,
            const QJsonObject& context = {}, bool breadcrumb = false);
+// Milliseconds on a monotonic clock anchored at the first call, which main() performs before
+// any other startup work. Every startup milestone can then be reported on one shared timeline
+// regardless of the thread that emits it.
+[[nodiscard]] qint64 startupElapsedMs();
+// Copies the supplied context and adds the shared startup clock under "elapsedMs", so startup
+// milestones stay comparable across sessions without each call site repeating the bookkeeping.
+[[nodiscard]] QJsonObject startupContext(QJsonObject context = {});
 QString fileId(const QString& path);
 QString operationId();
 Level parseLevel(const QString& name);

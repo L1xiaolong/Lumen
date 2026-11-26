@@ -242,7 +242,15 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     engine.addImageProvider(QStringLiteral("system-folder"),
                             new mvpview::SystemFolderIconProvider());
 #endif
-    mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::startup(), QStringLiteral("qml.loading"), {}, true);
+    mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::startup(), QStringLiteral("qml.loading"),
+        mvpview::diagnostics::startupContext(), true);
+#ifdef MVPVIEW_ENABLE_UI_TESTS
+    // The browse page composes asynchronously after the window appears. UI tests assert on
+    // the fully built workspace right after the event loop starts, so they need the loader
+    // synchronous instead.
+    if (!uiTestDirectory.isEmpty())
+        engine.rootContext()->setContextProperty(QStringLiteral("uiTestSynchronousStartup"), true);
+#endif
     engine.load(QUrl(QStringLiteral("qrc:/MvpViewQml/Main.qml")));
     if (engine.rootObjects().isEmpty()) {
         return 1;
@@ -251,6 +259,8 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     if (!mainWindow) {
         return 1;
     }
+    mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::startup(), QStringLiteral("qml.loaded"),
+        mvpview::diagnostics::startupContext(), true);
     QObject::connect(mainWindow, &QQuickWindow::sceneGraphInitialized, mainWindow, [mainWindow] {
         const auto* renderer = mainWindow->rendererInterface();
         auto* rhi = static_cast<QRhi*>(renderer->getResource(mainWindow, QSGRendererInterface::RhiResource));
@@ -262,7 +272,7 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
             context.insert(QStringLiteral("textureSizeMax"), rhi->resourceLimit(QRhi::TextureSizeMax));
         }
         mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::render(), QStringLiteral("scenegraph.initialized"),
-            context, true);
+            mvpview::diagnostics::startupContext(std::move(context)), true);
     }, Qt::DirectConnection);
     // The canvas buffer is interpreted in the colour space the platform reports for the window
     // surface, so "auto" has to follow it. The report is only populated once the platform window
@@ -335,6 +345,8 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
     } else {
         mainWindow->showNormal();
     }
+    mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::startup(),
+        QStringLiteral("window.shown"), mvpview::diagnostics::startupContext(), true);
     // Remember the most recent stable state so closing from the taskbar still restores to
     // normal/maximized instead of starting minimized.
     // The Hidden fallback is gated by applicationExitPending so rejecting a compare/full-screen
@@ -375,10 +387,19 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
                      });
     auto firstFrameConnection = std::make_shared<QMetaObject::Connection>();
     *firstFrameConnection = QObject::connect(mainWindow, &QQuickWindow::frameSwapped, &browseController,
-        [&browseController, firstFrameConnection] {
+        [&browseController, &diagnosticService, firstFrameConnection] {
             QObject::disconnect(*firstFrameConnection);
-
+            mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::startup(),
+                QStringLiteral("startup.first_frame"), mvpview::diagnostics::startupContext(), true);
+            // The user already sees the window, so the deferred folder restore owns the next
+            // milestone. Crash capture only needs to be ready for crashes after this point;
+            // spawning its helper process before the first frame would only compete with it.
             browseController.startDeferredInitialDirectory();
+            diagnosticService.startCrashCapture({});
+            mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::startup(),
+                QStringLiteral("crash_capture.started"),
+                mvpview::diagnostics::startupContext({{"status", diagnosticService.crashStatus()},
+                                                      {"error", diagnosticService.error()}}), true);
         }, Qt::QueuedConnection);
 
     if (!displayMode.isEmpty()) {
@@ -418,6 +439,9 @@ static int runApplication(int argc, char* argv[], mvpview::diagnostics::Service&
 }
 
 int main(int argc, char* argv[]) {
+    // Anchor the shared startup clock before any other work so every milestone below shares
+    // one timeline from process start.
+    (void) mvpview::diagnostics::startupElapsedMs();
     QCoreApplication::setApplicationName(QStringLiteral("Lumen"));
     QCoreApplication::setOrganizationName(QStringLiteral("MvpView"));
     QCoreApplication::setApplicationVersion(QStringLiteral(MVPVIEW_PROJECT_VERSION));
@@ -432,6 +456,8 @@ int main(int argc, char* argv[]) {
 #endif
     if (!mvpview::migrateLegacySettings())
         qWarning("Could not finish migrating legacy settings to Lumen");
+    mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::startup(),
+        QStringLiteral("settings.migrated"), mvpview::diagnostics::startupContext(), true);
     int result = 0;
     {
         const QSettings diagnosticSettings;
@@ -441,11 +467,8 @@ int main(int argc, char* argv[]) {
         diagnosticOptions.crashEnabled = diagnosticSettings.value(QStringLiteral("diagnostics/crashReportingEnabled"), true).toBool();
         diagnosticOptions.level = mvpview::diagnostics::parseLevel(diagnosticSettings.value(QStringLiteral("diagnostics/logLevel"), QStringLiteral("Info")).toString());
         mvpview::diagnostics::Service diagnosticService(diagnosticOptions);
-        diagnosticService.startCrashCapture({});
-        mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::startup(),
-            QStringLiteral("crash_capture.started"),
-            {{"status", diagnosticService.crashStatus()}, {"error", diagnosticService.error()}}, true);
-        mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::startup(), QStringLiteral("application.start"), {}, true);
+        mvpview::diagnostics::event(mvpview::diagnostics::Level::Info, mvpview::diagnostics::startup(), QStringLiteral("application.start"),
+            mvpview::diagnostics::startupContext(), true);
         result = runApplication(argc, argv, diagnosticService);
         diagnosticService.markCleanExit();
     }

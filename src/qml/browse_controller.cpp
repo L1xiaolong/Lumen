@@ -182,6 +182,7 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
     scanBatchTimer_->setSingleShot(true);
     connect(scanBatchTimer_, &QTimer::timeout, this, [this] {
         QElapsedTimer budget; budget.start();
+        const bool firstContent = thumbnailModel_->rowCount() == 0;
         do {
             const qsizetype count = std::min<qsizetype>(32, pendingScanFiles_.size() - pendingScanOffset_);
             if (count <= 0) break;
@@ -193,6 +194,11 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
                 scanner_->acknowledgeBatch(scanGeneration_);
             }
         } while (budget.elapsed() < 4);
+        if (firstContent && thumbnailModel_->rowCount() > 0) {
+            diagnostics::event(diagnostics::Level::Info, diagnostics::startup(),
+                QStringLiteral("directory.first_content"),
+                diagnostics::startupContext({{"items", thumbnailModel_->rowCount()}}), true);
+        }
         if (pendingScanOffset_ < pendingScanFiles_.size()) {
             if (pendingScanOffset_ >= 192) {
                 pendingScanFiles_ = pendingScanFiles_.mid(pendingScanOffset_);
@@ -201,7 +207,17 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
             }
             scanBatchTimer_->start(0);
         }
-        else { pendingScanFiles_.clear(); pendingScanOffset_ = 0; pendingScanBatchEnds_.clear(); }
+        else {
+            pendingScanFiles_.clear(); pendingScanOffset_ = 0; pendingScanBatchEnds_.clear();
+            if (snapshotReconcilePending_ || rescanAfterDrain_) {
+                snapshotReconcilePending_ = false;
+                rescanAfterDrain_ = false;
+                // The snapshot is fully applied; replace any of its stale rows with a real scan.
+                rescanCurrentDirectory();
+            }
+            registerPendingDirectoryWatcher();
+            emit contentSettled();
+        }
     });
     viewportOwner_ = QString::number(reinterpret_cast<quintptr>(this));
     filterTimer_ = new QTimer(this);
@@ -263,6 +279,12 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
     while (recentLocations_.size() > 12) recentLocations_.removeLast();
     gridCellWidth_ = std::clamp(settings.value(QStringLiteral("browser/qmlGridCellWidth"), 144).toInt(),
                                 144, 320);
+    const QVariantMap savedScrollPositions =
+        settings.value(QStringLiteral("browser/scrollPositions")).toMap();
+    for (auto it = savedScrollPositions.constBegin(); it != savedScrollPositions.constEnd(); ++it) {
+        const qreal offset = it.value().toReal();
+        if (offset > 0) viewportScrollPositions_.insert(it.key(), offset);
+    }
     settings.remove(QStringLiteral("browser/qmlInspectorVisible"));
     const int savedSortMode = settings.value(QStringLiteral("browser/sortMode"), 0).toInt();
     if (savedSortMode >= static_cast<int>(BrowserSortMode::Name) &&
@@ -302,7 +324,16 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
                 }
 
                 diagnostics::event(diagnostics::Level::Info, diagnostics::browse(), QStringLiteral("directory.scan_complete"),
-                    {{"directory", diagnostics::fileId(directory)}, {"generation", static_cast<qint64>(generation)}, {"items", files.size()}}, true);
+                    {{"directory", diagnostics::fileId(directory)}, {"generation", static_cast<qint64>(generation)},
+                     {"items", files.size()}, {"elapsedMs", diagnostics::startupElapsedMs()}}, true);
+                // Persist the confirmed listing so the next launch can present this folder
+                // instantly while this same scan reconciles it. Remote folders stay uncached:
+                // their listings arrive through the network path with preparedFiles instead.
+                if (!networkAccess_->isRemote(directory)) {
+                    snapshotStore_.saveAsync(directory, files);
+                }
+                registerPendingDirectoryWatcher();
+                emit contentSettled();
                 if (!incrementalScan_) {
                     bool galleryFileChanged = false;
                     if (!galleryPath_.isEmpty()) {
@@ -400,6 +431,9 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
     });
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this,
             &BrowseController::clipboardStateChanged);
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, [this] {
+        persistViewportScrollPositions();
+    });
     const auto reloadGallery = [this] {
         const QString path = galleryPath_;
         setGalleryPath({});
@@ -737,6 +771,11 @@ void BrowseController::restoreInitialDirectoryAsync(const QString& initialDirect
         startupDirectory =
             QSettings().value(QStringLiteral("browser/lastDirectory"), QDir::homePath()).toString();
     }
+    diagnostics::event(diagnostics::Level::Info, diagnostics::startup(),
+        QStringLiteral("directory.restore_start"),
+        diagnostics::startupContext({{"directory", diagnostics::fileId(startupDirectory)}}), true);
+    startupScrollRestorePending_ = true;
+    startupScrollRestoreDirectory_ = startupDirectory;
     if (networkAccess_->isRemote(startupDirectory)) {
         openDirectoryInternal(startupDirectory, true);
         return;
@@ -752,15 +791,32 @@ void BrowseController::restoreInitialDirectoryAsync(const QString& initialDirect
         } else {
             resolvedDirectory = startupFallbackDirectory();
         }
+        // Read the persisted listing on this worker so the GUI thread only receives finished
+        // records. A snapshot for a folder that no longer exists is simply absent.
+        std::optional<QVector<ImageFileRecord>> snapshot;
+        qint64 snapshotLoadMs = -1;
+        if (self) {
+            QElapsedTimer loadTimer;
+            loadTimer.start();
+            snapshot = self->snapshotStore_.load(resolvedDirectory);
+            snapshotLoadMs = loadTimer.elapsed();
+        }
         if (!self) return;
         QMetaObject::invokeMethod(
             self,
-            [self, resolvedDirectory, requestGeneration] {
+            [self, resolvedDirectory, requestGeneration, snapshot = std::move(snapshot),
+             snapshotLoadMs]() mutable {
                 if (!self || self->directoryRequestGeneration_ != requestGeneration ||
                     !self->currentDirectory_.isEmpty()) {
                     return;
                 }
-                self->openDirectoryInternal(resolvedDirectory, true, true);
+                diagnostics::event(diagnostics::Level::Info, diagnostics::startup(),
+                    QStringLiteral("directory.restored"),
+                    diagnostics::startupContext({{"directory", diagnostics::fileId(resolvedDirectory)},
+                                                 {"snapshot", snapshot ? snapshot->size() : 0},
+                                                 {"snapshotLoadMs", snapshotLoadMs}}), true);
+                self->openDirectoryInternal(resolvedDirectory, true, true, std::nullopt, false,
+                                             std::move(snapshot));
             },
             Qt::QueuedConnection);
     };
@@ -1478,7 +1534,8 @@ void BrowseController::failNetworkDirectory(bool timedOut) {
 void BrowseController::openDirectoryInternal(const QString& path, bool addToHistory,
                                              bool pathAlreadyValidated,
                                              std::optional<QVector<ImageFileRecord>> preparedFiles,
-                                             bool fromRecents) {
+                                             bool fromRecents,
+                                             std::optional<QVector<ImageFileRecord>> snapshotFiles) {
     networkDirectoryTimer_->stop();
     pendingNetworkPath_.clear();
     const quint64 requestGeneration = ++directoryRequestGeneration_;
@@ -1549,6 +1606,8 @@ void BrowseController::openDirectoryInternal(const QString& path, bool addToHist
         QSettings settings;
         settings.setValue(QStringLiteral("browser/lastDirectory"), currentDirectory_);
         settings.setValue(QStringLiteral("browser/recentLocations"), recentLocations_);
+        // The previous folder's offset was the last one reported before this navigation.
+        persistViewportScrollPositions();
     }
     emit recentLocationsChanged();
     recentCandidateTimer_->stop();
@@ -1568,15 +1627,17 @@ void BrowseController::openDirectoryInternal(const QString& path, bool addToHist
     if (!directoryWatcher_->directories().isEmpty()) {
         directoryWatcher_->removePaths(directoryWatcher_->directories());
     }
-#ifdef Q_OS_WIN
-    if (!isWindowsRemotePath(currentDirectory_)) directoryWatcher_->addPath(currentDirectory_);
-#else
-    directoryWatcher_->addPath(currentDirectory_);
-#endif
+    // Registering the directory watcher waits until the listing has settled on screen: starting
+    // an FSEvents stream costs time proportional to the directory's entry count (hundreds of
+    // milliseconds for large photo libraries). The reconcile scan and drain batches already
+    // cover any change inside this window.
+    pendingWatcherDirectory_ = currentDirectory_;
     scanBatchTimer_->stop();
     pendingScanFiles_.clear(); pendingScanOffset_ = 0; pendingScanBatchEnds_.clear();
     thumbnailModel_->setFiles({});
     incrementalScan_ = true;
+    snapshotReconcilePending_ = false;
+    rescanAfterDrain_ = false;
     setStatusText(QCoreApplication::translate("BrowseController", "Scanning %1…").arg(QDir::toNativeSeparators(currentDirectory_)));
     confirmedHistoryIndex_ = navigationHistoryIndex_;
     if (preparedFiles) {
@@ -1584,16 +1645,47 @@ void BrowseController::openDirectoryInternal(const QString& path, bool addToHist
         ++scanGeneration_; // Invalidate batches from the previous folder.
         thumbnailModel_->setFiles(*preparedFiles);
         emit scanner_->scanFinished(currentDirectory_, *preparedFiles, scanGeneration_);
+    } else if (snapshotFiles && !snapshotFiles->isEmpty()) {
+        // Present the persisted listing immediately through the same batched append the live
+        // scan uses, then reconcile it with one real scan once the batches have drained.
+        scanner_->cancel();
+        ++scanGeneration_; // Invalidate batches from the previous folder.
+        snapshotReconcilePending_ = true;
+        pendingScanFiles_ = *snapshotFiles;
+        scanBatchTimer_->start(0);
+        diagnostics::event(diagnostics::Level::Info, diagnostics::startup(),
+            QStringLiteral("directory.snapshot_applied"),
+            diagnostics::startupContext({{"items", pendingScanFiles_.size()}}), true);
     } else {
         scanGeneration_ = scanner_->scanAsync(currentDirectory_);
     }
 }
 
 void BrowseController::rescanCurrentDirectory() {
-    if (!currentDirectory_.isEmpty()) {
-        incrementalScan_ = false;
-        scanGeneration_ = scanner_->scanAsync(currentDirectory_);
+    if (currentDirectory_.isEmpty()) {
+        return;
     }
+    if (pendingScanOffset_ < pendingScanFiles_.size()) {
+        // A reconcile against a partially drained listing would append the undrained snapshot
+        // rows again through updateFiles. Wait for the drain to finish instead.
+        rescanAfterDrain_ = true;
+        return;
+    }
+    incrementalScan_ = false;
+    scanGeneration_ = scanner_->scanAsync(currentDirectory_);
+}
+
+void BrowseController::registerPendingDirectoryWatcher() {
+    const QString directory = std::exchange(pendingWatcherDirectory_, QString{});
+    if (directory.isEmpty() || directory != currentDirectory_ ||
+        directoryWatcher_->directories().contains(directory)) {
+        return;
+    }
+#ifdef Q_OS_WIN
+    if (!isWindowsRemotePath(directory)) directoryWatcher_->addPath(directory);
+#else
+    directoryWatcher_->addPath(directory);
+#endif
 }
 
 QString BrowseController::selectionStatusText() const {
@@ -1605,6 +1697,40 @@ void BrowseController::retranslate() {
     if (showingSelectionStatus_) setStatusText(selectionStatusText());
     else if (currentDirectory_.isEmpty())
         setStatusText(QCoreApplication::translate("BrowseController", "Choose a folder for this pane"));
+}
+
+void BrowseController::rememberViewportScroll(qreal offset) {
+    if (currentDirectory_.isEmpty() || offset <= 0) return;
+    viewportScrollPositions_.insert(currentDirectory_, offset);
+}
+
+qreal BrowseController::consumeSavedViewportScroll() {
+    // The pane composes asynchronously, so the settle signal can fire before its connections
+    // exist, and the pane can also complete before the folder is restored. The offset is only
+    // consumed once both sides are ready, which keeps the restore independent of that race.
+    if (!startupScrollRestorePending_ || currentDirectory_ != startupScrollRestoreDirectory_) {
+        return -1;
+    }
+    const qreal offset = viewportScrollPositions_.value(currentDirectory_, 0);
+    if (offset <= 0) return -1;
+    startupScrollRestorePending_ = false;
+    diagnostics::event(diagnostics::Level::Info, diagnostics::browse(),
+        QStringLiteral("directory.scroll_restored"),
+        {{"offset", offset}, {"elapsedMs", diagnostics::startupElapsedMs()}}, true);
+    return offset;
+}
+
+void BrowseController::persistViewportScrollPositions() {
+    // Keep the map bounded like the recent-folders list so settings cannot grow without end.
+    while (viewportScrollPositions_.size() > 12) {
+        viewportScrollPositions_.erase(viewportScrollPositions_.begin());
+    }
+    QVariantMap stored;
+    for (auto it = viewportScrollPositions_.constBegin();
+         it != viewportScrollPositions_.constEnd(); ++it) {
+        stored.insert(it.key(), it.value());
+    }
+    QSettings().setValue(QStringLiteral("browser/scrollPositions"), stored);
 }
 
 void BrowseController::setStatusText(const QString& text) {
