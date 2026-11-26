@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Lumen VERSION 1.1.1 LANGUAGES CXX)
+project(Lumen VERSION 1.1.2 LANGUAGES CXX)
 enable_language(C)
 
 option(MVPVIEW_ENABLE_LCMS2 "Enable embedded ICC conversion with LittleCMS when available" ON)

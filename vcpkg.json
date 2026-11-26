@@ -1,6 +1,6 @@
 {
   "name": "lumen",
-  "version-string": "1.1.1",
+  "version-string": "1.1.2",
   "description": "Lightweight cross-platform image browser and comparison tool",
   "license": "MIT",
   "dependencies": [
