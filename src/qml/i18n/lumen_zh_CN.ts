@@ -4850,12 +4850,12 @@ Choose another folder or drop images here</source>
         <translation type="vanished">Lumen</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="77"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="71"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="87"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="81"/>
         <source>New folder</source>
         <translation>新建文件夹</translation>
     </message>
@@ -4868,27 +4868,27 @@ Choose another folder or drop images here</source>
         <translation type="vanished">最多支持 4 个浏览窗格</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="129"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="123"/>
         <source>List view</source>
         <translation>列表视图</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="159"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="153"/>
         <source>Sort by name</source>
         <translation>按名称排序</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="159"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="153"/>
         <source>Sort by modified time</source>
         <translation>按修改时间排序</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="160"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="154"/>
         <source>Sort by file size</source>
         <translation>按文件大小排序</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="160"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="154"/>
         <source>Sort by file type</source>
         <translation>按文件类型排序</translation>
     </message>
@@ -4913,7 +4913,7 @@ Choose another folder or drop images here</source>
         <translation type="vanished">选择一张图片以调整大小</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="170"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="164"/>
         <source>Smooth display</source>
         <translation>平滑显示</translation>
     </message>
@@ -4931,8 +4931,7 @@ Choose another folder or drop images here</source>
         <translation type="vanished">×</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="204"/>
-        <location filename="../Pages/BrowsePage.qml" line="270"/>
+        <location filename="../Pages/BrowsePage.qml" line="249"/>
         <source>Settings</source>
         <translation>设置</translation>
     </message>
@@ -4941,12 +4940,12 @@ Choose another folder or drop images here</source>
         <translation type="vanished">对比所选图片</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="179"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="173"/>
         <source>Compare selected images</source>
         <translation>对比所选图片</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="179"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="173"/>
         <source>Select 2–4 images to compare</source>
         <translation>选择 2～4 张图片进行对比</translation>
     </message>
@@ -4955,54 +4954,52 @@ Choose another folder or drop images here</source>
         <translation type="vanished">清除搜索</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="67"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="61"/>
         <source>Hide sidebar</source>
         <translation>隐藏侧栏</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="67"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="61"/>
         <source>Show sidebar</source>
         <translation>显示侧栏</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="97"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="91"/>
         <source>Add browser pane</source>
         <translation>新增浏览窗格</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="97"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="91"/>
         <source>Maximum 4 browser panes</source>
         <translation>最多支持 4 个浏览窗格</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="118"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="112"/>
         <source>Grid view</source>
         <translation>网格视图</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="118"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="112"/>
         <source>Grid view is available with up to 2 browser panes</source>
         <translation>最多 2 个浏览窗格时可使用网格视图</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="140"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="134"/>
         <source>Gallery view</source>
         <translation>画廊视图</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="140"/>
+        <location filename="../Mvp/TopToolbar.ui.qml" line="134"/>
         <source>Gallery view is available with 1 browser pane</source>
         <translation>仅有 1 个浏览窗格时可使用画廊视图</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="195"/>
         <source>Hide inspector</source>
-        <translation>隐藏属性检查器</translation>
+        <translation type="vanished">隐藏属性检查器</translation>
     </message>
     <message>
-        <location filename="../Mvp/TopToolbar.ui.qml" line="195"/>
         <source>Show properties inspector</source>
-        <translation>显示属性检查器</translation>
+        <translation type="vanished">显示属性检查器</translation>
     </message>
 </context>
 <context>

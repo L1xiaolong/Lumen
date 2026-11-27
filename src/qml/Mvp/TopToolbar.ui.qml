@@ -19,11 +19,8 @@ Rectangle {
     property string openFolderShortcutText: ""
     property string newFolderShortcutText: ""
     property string compareShortcutText: ""
-    property string settingsShortcutText: ""
     property string navigatorShortcutText: ""
     property bool navigatorVisible: true
-    property bool inspectorVisible: false
-    property bool settingsVisible: false
     property bool compareEnabled: false
     property bool activePaneAvailable: true
     property bool activeDirectoryAvailable: true
@@ -34,7 +31,6 @@ Rectangle {
     property real navigationWidth: Theme.sidebarWidth
     property real captionButtonsWidth: 0
     readonly property rect leftControlsBounds: Qt.rect(0, 0, dragSpace.x + 16, height)
-    readonly property rect rightControlsBounds: Qt.rect(rightControls.x + 16, 0, rightControls.width, height)
 
     property alias navigatorControl: navigatorToggleButton
     property alias openFolderControl: openFolderButton
@@ -46,8 +42,6 @@ Rectangle {
     property alias sortControl: sortButton
     property alias compareControl: compareButton
     property alias smoothDisplayControl: smoothDisplayButton
-    property alias inspectorControl: inspectorToggleButton
-    property alias settingsControl: settingsButton
 
     RowLayout {
         anchors.fill: parent
@@ -181,31 +175,6 @@ Rectangle {
             }
         }
         Item { id: dragSpace; Layout.fillWidth: true; Layout.minimumWidth: 48 }
-        RowLayout {
-            id: rightControls
-            spacing: 2
-            AppIconButton {
-                id: inspectorToggleButton
-                objectName: "toolbarInspectorButton"
-                controlSize: root.toolbarButtonSize
-                renderedIconSize: root.toolbarIconSize
-                checkable: true
-                checked: root.inspectorVisible
-                iconSource: root.iconPrefix + "info.svg"
-                toolTipText: root.inspectorVisible ? qsTr("Hide inspector") : qsTr("Show properties inspector")
-            }
-            AppIconButton {
-                id: settingsButton
-                objectName: "toolbarSettingsButton"
-                visible: root.settingsVisible
-                controlSize: root.toolbarButtonSize
-                renderedIconSize: root.toolbarIconSize
-                iconSource: root.iconPrefix + "settings.svg"
-                toolTipText: qsTr("Settings")
-                shortcutText: root.settingsShortcutText
-            }
-        }
-
     }
 
     Rectangle {

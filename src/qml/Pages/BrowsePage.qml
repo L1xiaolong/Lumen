@@ -62,7 +62,6 @@ Rectangle {
     property real titleBarHeight: Theme.toolbarHeight
     property real captionButtonsWidth: 0
     readonly property rect titleBarLeftControls: toolbar.leftControlsBounds
-    readonly property rect titleBarRightControls: toolbar.rightControlsBounds
     signal fullScreenRequested(var paths, int initialIndex)
     signal settingsRequested()
     // Use visible, not opened: block input throughout popup enter/exit transitions.
@@ -144,9 +143,6 @@ Rectangle {
         compareShortcutText: root.configuredShortcutLabel("compare", "C")
         navigatorVisible: root.navigatorVisible
         navigatorShortcutText: root.configuredShortcutLabel("toggleNavigator", Qt.platform.os === "osx" ? "⌃B" : "Ctrl+B")
-        inspectorVisible: root.inspectorVisible
-        settingsVisible: !root.navigatorVisible
-        settingsShortcutText: root.configuredShortcutLabel("settings", Qt.platform.os === "osx" ? "⌘," : "Ctrl+,")
         newFolderShortcutText: root.configuredShortcutLabel("newFolder", Qt.platform.os === "osx" ? "⇧⌘N" : "Ctrl+Shift+N")
         searchShortcutText: root.configuredShortcutLabel("find", Qt.platform.os === "osx" ? "⌘F" : "Ctrl+F")
         compareEnabled: root.workspaceController.canCompare
@@ -204,17 +200,6 @@ Rectangle {
     Connections {
         target: toolbar.navigatorControl
         function onClicked() { root.navigatorVisible = !root.navigatorVisible; }
-    }
-    Connections {
-        target: toolbar.inspectorControl
-        function onClicked() {
-            if (root.inspectorVisible) root.closeInspector();
-            else root.showProperties();
-        }
-    }
-    Connections {
-        target: toolbar.settingsControl
-        function onClicked() { root.settingsRequested(); }
     }
     Connections {
         target: root.controller

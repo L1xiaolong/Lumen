@@ -27,7 +27,7 @@ ApplicationWindow {
         : browsePage ? browsePage.titleBarLeftControls : Qt.rect(0, 0, 0, 0)
     readonly property rect titleBarRightControls: showingCompare && comparePage
         ? comparePage.titleBarRightControls
-        : browsePage ? browsePage.titleBarRightControls : Qt.rect(0, 0, 0, 0)
+        : Qt.rect(0, 0, 0, 0)
     color: Theme.sensorWhite
     palette.window: Theme.sensorWhite
     palette.windowText: Theme.graphiteInk
