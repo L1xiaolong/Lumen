@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <QSet>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QTimer>
@@ -52,6 +53,13 @@ class ImagePropertiesController final : public QObject {
     // Source 0 remains available for existing display-analysis consumers.
     Q_INVOKABLE void requestHistogram(int source);
     Q_INVOKABLE QVariantMap histogram(int source) const;
+
+    // Property export (plain-text .txt). The view drives the save dialog and
+    // passes the user-selected destination here; the returned map carries
+    // {ok, path} on success or {ok, error} on failure.
+    Q_INVOKABLE QString suggestedExportFileName() const;
+    Q_INVOKABLE QUrl suggestedExportFolder() const;
+    Q_INVOKABLE QVariantMap exportProperties(const QUrl& target);
 
   signals:
     void stateChanged();

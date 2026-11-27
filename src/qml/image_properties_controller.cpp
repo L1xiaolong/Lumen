@@ -5,6 +5,7 @@
 #include "core/raw_plane_histogram.h"
 #include "io/image_loader.h"
 #include "io/jxl_exr_decoder.h"
+#include "qml/properties_export.h"
 
 #include <QDir>
 #include <QCoreApplication>
@@ -13,6 +14,7 @@
 #include <QLocale>
 #include <QMetaObject>
 #include <QPointer>
+#include <QSaveFile>
 #include <QThreadPool>
 
 #include <algorithm>
@@ -590,6 +592,48 @@ void ImagePropertiesController::requestHistogram(int source) {
 
 QVariantMap ImagePropertiesController::histogram(int source) const {
     return source == 1 ? sourceHistogram_ : displayHistogram_;
+}
+
+QString ImagePropertiesController::suggestedExportFileName() const {
+    return PropertiesExport::suggestedFileName(path_);
+}
+
+QUrl ImagePropertiesController::suggestedExportFolder() const {
+    if (path_.isEmpty()) return {};
+    return QUrl::fromLocalFile(QFileInfo(path_).absolutePath());
+}
+
+QVariantMap ImagePropertiesController::exportProperties(const QUrl& target) {
+    if (path_.isEmpty()) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"),
+                 text(QT_TRANSLATE_NOOP("ImageProperties", "No image is selected."))}};
+    }
+    QString destination = target.toLocalFile();
+    if (destination.isEmpty()) destination = target.toString();
+    if (destination.isEmpty()) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"),
+                 text(QT_TRANSLATE_NOOP("ImageProperties", "No export destination was chosen."))}};
+    }
+    if (QFileInfo(destination).suffix().isEmpty()) destination += QStringLiteral(".txt");
+    // The export covers every inspector tab: overview + advanced groups, the
+    // native-channel histogram statistics (when already analyzed), and warnings.
+    const QString document = PropertiesExport::documentText(
+        fileName_, path_, overviewGroups_, advancedGroups_, warnings_, sourceHistogram_);
+    const QByteArray payload = document.toUtf8();
+    // QSaveFile keeps an existing file intact if the write fails partway;
+    // QIODevice::Text turns "\n" into the platform's line endings.
+    QSaveFile file(destination);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)
+        || file.write(payload) != payload.size() || !file.commit()) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"),
+                 text(QT_TRANSLATE_NOOP("ImageProperties", "Unable to write the export file: %1"))
+                     .arg(file.errorString())}};
+    }
+    return {{QStringLiteral("ok"), true},
+            {QStringLiteral("path"), QDir::toNativeSeparators(destination)}};
 }
 
 void ImagePropertiesController::setHistogram(int source, quint64 generation, QVariantMap value) {

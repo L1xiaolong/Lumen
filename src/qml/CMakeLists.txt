@@ -23,6 +23,8 @@ qt_add_executable(LumenQml
     compare_controller.cpp
     image_properties_controller.h
     image_properties_controller.cpp
+    properties_export.h
+    properties_export.cpp
     full_screen_controller.h
     full_screen_controller.cpp
     raw_parameters_controller.h

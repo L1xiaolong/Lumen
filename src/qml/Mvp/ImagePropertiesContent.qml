@@ -2,6 +2,8 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Window
+import QtCore
+import QtQuick.Dialogs as PlatformDialogs
 import "."
 
 Rectangle {
@@ -16,6 +18,8 @@ Rectangle {
     property var scrollPositions: [0, 0, 0]
     property var expandedGroups: ({})
     property string displayedPath: controller ? controller.path : ""
+    property string exportStatus: ""
+    property bool exportStatusIsError: false
     readonly property bool hasItem: !!controller && controller.path.length > 0
     readonly property int effectiveTab: controller && controller.directory ? 0 : currentTab
     readonly property bool textSelectionActive: {
@@ -42,9 +46,43 @@ Rectangle {
                                        Math.max(0, scroll.contentHeight - scroll.height))
         })
     }
+
+    // Opens the save dialog for the property export. The destination folder and
+    // file name default to the image's folder and
+    // "<file>_properties_<yyyymmddhhmm>"; the user can change both. The
+    // native-channel histogram analysis starts now so its statistics are ready
+    // by the time a destination is confirmed.
+    function openExport() {
+        if (!controller || !hasItem || controller.directory) return
+        controller.requestHistogram(1)
+        let folder = controller.suggestedExportFolder()
+        if (!folder || folder.toString().length === 0)
+            folder = StandardPaths.writableLocation(StandardPaths.PicturesLocation)
+        propertiesExportDialog.currentFolder = folder
+        propertiesExportDialog.selectedFile = propertiesExportDialog.currentFolder
+                + "/" + controller.suggestedExportFileName()
+        propertiesExportDialog.open()
+    }
+
+    function runExport(target) {
+        if (!controller) return
+        const result = controller.exportProperties(target)
+        if (result && result.ok) {
+            exportStatus = qsTr("Exported: %1").arg(result.path)
+            exportStatusIsError = false
+        } else {
+            exportStatus = result && result.error ? result.error
+                                                   : qsTr("Unable to write the export file.")
+            exportStatusIsError = true
+        }
+        exportStatusTimer.restart()
+    }
+
     onDisplayedPathChanged: {
         scrollPositions = [0, 0, 0]
         expandedGroups = ({})
+        exportStatus = ""
+        exportStatusIsError = false
         scroll.contentY = 0
     }
 
@@ -184,6 +222,25 @@ Rectangle {
                 }
             }
             SettingsButton {
+                objectName: "exportPropertiesButton"
+                width: parent.width
+                visible: root.hasItem && !root.controller.directory && root.groups.length > 0
+                enabled: !root.controller || (!root.controller.loading && !root.controller.metadataLoading)
+                text: qsTr("Export…")
+                onClicked: root.openExport()
+            }
+            Text {
+                objectName: "exportPropertiesStatus"
+                visible: root.exportStatus.length > 0
+                width: parent.width
+                text: root.exportStatus
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                color: root.exportStatusIsError ? Theme.danger : Theme.mutedInk
+                font.family: Theme.uiFont
+                font.pixelSize: 12
+            }
+            SettingsButton {
                 visible: root.effectiveTab === 0 && root.hasDetailedMetadata
                 width: parent.width
                 text: qsTr("Detailed metadata")
@@ -232,6 +289,23 @@ Rectangle {
                 }
             }
 
+        }
+    }
+    PlatformDialogs.FileDialog {
+        id: propertiesExportDialog
+        objectName: "propertiesExportDialog"
+        title: qsTr("Export properties")
+        fileMode: PlatformDialogs.FileDialog.SaveFile
+        nameFilters: [qsTr("Text files (*.txt)")]
+        defaultSuffix: "txt"
+        onAccepted: root.runExport(selectedFile)
+    }
+    Timer {
+        id: exportStatusTimer
+        interval: 6000
+        onTriggered: {
+            root.exportStatus = ""
+            root.exportStatusIsError = false
         }
     }
 }
