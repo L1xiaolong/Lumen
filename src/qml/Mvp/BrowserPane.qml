@@ -172,6 +172,27 @@ Rectangle {
             border.color: Theme.primaryButton
             border.width: 1
             radius: 6
+            Rectangle {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 32, dropHintText.implicitWidth + 24)
+                height: dropHintText.implicitHeight + 14
+                radius: 6
+                color: Theme.raisedSurface
+                border.color: Theme.primaryButton
+                border.width: 1
+                Text {
+                    id: dropHintText
+                    anchors.centerIn: parent
+                    width: parent.width - 20
+                    text: qsTr("Drop to copy into “%1”").arg(root.controller.currentFolderName)
+                    elide: Text.ElideMiddle
+                    horizontalAlignment: Text.AlignHCenter
+                    color: Theme.graphiteInk
+                    font.family: Theme.uiFont
+                    font.pixelSize: Theme.captionFontSize
+                    font.weight: Theme.emphasisFontWeight
+                }
+            }
         }
     }
 

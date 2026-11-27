@@ -88,26 +88,27 @@ Item {
 
         RowLayout {
             anchors.fill: parent
-            spacing: 8
+            spacing: 6
 
             Rectangle {
                 id: typeBadge
                 objectName: metadataStrip.badgeObjectName
                 visible: !metadataStrip.directory
-                Layout.preferredWidth: typeLabel.implicitWidth
+                Layout.preferredWidth: typeLabel.implicitWidth + 10
                 Layout.preferredHeight: 17
                 radius: 4
-                color: "transparent"
-                border.width: 0
+                color: metadataStrip.badgeSurface
+                border.width: 1
+                border.color: metadataStrip.badgeBorder
 
                 Text {
                     id: typeLabel
                     anchors.centerIn: parent
                     text: metadataStrip.normalizedType
-                    color: root.selected ? Theme.selectionMutedInk : Theme.mutedInk
+                    color: metadataStrip.badgeInk
                     font.family: Theme.uiFont
-                    font.pixelSize: Theme.metadataFontSize
-                    font.weight: Theme.bodyFontWeight
+                    font.pixelSize: 10
+                    font.weight: Theme.emphasisFontWeight
                 }
             }
 
@@ -217,7 +218,7 @@ Item {
                 }
                 PanoramaBadge {
                     anchors.left: parent.left
-                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
                     anchors.margins: 4
                     visible: root.panoramaCandidate
                 }
@@ -307,7 +308,7 @@ Item {
                 }
                 PanoramaBadge {
                     anchors.left: parent.left
-                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
                     anchors.margins: 4
                     visible: root.panoramaCandidate
                 }
@@ -317,7 +318,7 @@ Item {
                 anchors.left: listImageWell.right
                 anchors.leftMargin: 14
                 anchors.right: parent.right
-                anchors.rightMargin: 16
+                anchors.rightMargin: root.selected ? 38 : 16
                 anchors.top: parent.top
                 anchors.topMargin: 15
                 text: root.fileName
@@ -356,9 +357,8 @@ Item {
 
     Rectangle {
         visible: root.selected
-        x: root.panoramaCandidate ? (root.displayMode === 1 ? 58 : root.width - 32)
-                                  : (root.displayMode === 1 ? 12 : 14)
-        y: root.displayMode === 1 ? 10 : 14
+        x: root.width - 30
+        y: root.displayMode === 1 ? Math.round((root.height - height) / 2) : 12
         width: 18
         height: 18
         radius: 9

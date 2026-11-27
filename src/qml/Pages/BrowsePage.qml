@@ -148,6 +148,9 @@ Rectangle {
         sortMode: root.controller.sortMode
         openFolderShortcutText: root.configuredShortcutLabel("openFolder", Qt.platform.os === "osx" ? "⌘O" : "Ctrl+O")
         compareShortcutText: root.configuredShortcutLabel("compare", "C")
+        navigatorVisible: root.navigatorVisible
+        navigatorShortcutText: root.configuredShortcutLabel("toggleNavigator", Qt.platform.os === "osx" ? "⌃B" : "Ctrl+B")
+        inspectorVisible: root.inspectorVisible
         settingsVisible: !root.navigatorVisible
         settingsShortcutText: root.configuredShortcutLabel("settings", Qt.platform.os === "osx" ? "⌘," : "Ctrl+,")
         newFolderShortcutText: root.configuredShortcutLabel("newFolder", Qt.platform.os === "osx" ? "⇧⌘N" : "Ctrl+Shift+N")
@@ -203,6 +206,17 @@ Rectangle {
     Connections {
         target: toolbar.smoothDisplayControl
         function onClicked() { root.setSmoothDisplay(toolbar.smoothDisplayControl.checked); }
+    }
+    Connections {
+        target: toolbar.navigatorControl
+        function onClicked() { root.navigatorVisible = !root.navigatorVisible; }
+    }
+    Connections {
+        target: toolbar.inspectorControl
+        function onClicked() {
+            if (root.inspectorVisible) root.closeInspector();
+            else root.showProperties();
+        }
     }
     Connections {
         target: toolbar.settingsControl
@@ -341,6 +355,7 @@ Rectangle {
         id: navigator
         objectName: "folderNavigator"
         controller: root.controller
+        workspaceController: root.workspaceController
         browsingEnabled: root.workspaceController.hasActivePane === undefined ||
                          root.workspaceController.hasActivePane
         iconPrefix: root.iconPrefix
@@ -727,6 +742,34 @@ Rectangle {
                 galleryFlick.contentY = Math.max(0, (galleryFlick.contentHeight - galleryFlick.height) / 2)
             })
         }
+        function zoomBy(factor) {
+            if (!root.controller.galleryImageReady)
+                return;
+            const sourceSize = root.controller.galleryImageSize;
+            if (sourceSize.width <= 0 || sourceSize.height <= 0 ||
+                    galleryImage.paintedWidth <= 0 || galleryImage.paintedHeight <= 0)
+                return;
+            const centerX = galleryFlick.width / 2;
+            const centerY = galleryFlick.height / 2;
+            const imagePoint = galleryFlick.mapToItem(galleryImage, centerX, centerY);
+            const imageLeft = (galleryImage.width - galleryImage.paintedWidth) / 2;
+            const imageTop = (galleryImage.height - galleryImage.paintedHeight) / 2;
+            const sourceX = Math.max(0, Math.min(sourceSize.width,
+                (imagePoint.x - imageLeft) * sourceSize.width / galleryImage.paintedWidth));
+            const sourceY = Math.max(0, Math.min(sourceSize.height,
+                (imagePoint.y - imageTop) * sourceSize.height / galleryImage.paintedHeight));
+            const oldScale = galleryImage.paintedWidth / sourceSize.width;
+            const newScale = Math.max(0.02, Math.min(32.0, oldScale * factor));
+            actualPixels = true;
+            manualZoom = newScale;
+            Qt.callLater(function () {
+                galleryFlick.contentX = Math.max(0, Math.min(galleryFlick.contentWidth - galleryFlick.width,
+                    galleryImage.x + sourceX * newScale - centerX));
+                galleryFlick.contentY = Math.max(0, Math.min(galleryFlick.contentHeight - galleryFlick.height,
+                    galleryImage.y + sourceY * newScale - centerY));
+                refreshPixelProbe();
+            });
+        }
 
         function updatePixelProbe(viewportX, viewportY) {
             if (!root.controller.galleryImageReady || galleryImage.paintedWidth <= 0 ||
@@ -826,7 +869,7 @@ Rectangle {
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    anchors.right: galleryZoomLabel.left
+                    anchors.right: galleryPixelProbeLabel.visible ? galleryPixelProbeLabel.left : galleryZoomLabel.left
                     anchors.rightMargin: 10
                     text: root.controller.galleryInfoText.length > 0
                           ? root.controller.galleryInfoText
@@ -835,7 +878,21 @@ Rectangle {
                     elide: Text.ElideRight
                     color: Theme.graphiteInk
                     font.family: Theme.monoFont
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.metadataFontSize
+                }
+                Text {
+                    id: galleryPixelProbeLabel
+                    objectName: "galleryPixelProbeLabel"
+                    visible: galleryWorkspace.pixelProbeText.length > 0
+                    anchors.right: galleryZoomLabel.left
+                    anchors.rightMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: visible ? Math.min(220, implicitWidth) : 0
+                    text: galleryWorkspace.pixelProbeText
+                    elide: Text.ElideRight
+                    color: Theme.accent
+                    font.family: Theme.monoFont
+                    font.pixelSize: Theme.metadataFontSize
                 }
                 Text {
                     id: galleryZoomLabel
@@ -855,7 +912,7 @@ Rectangle {
                     }
                     color: Theme.mutedInk
                     font.family: Theme.monoFont
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.metadataFontSize
                 }
 
                 Row {
@@ -863,8 +920,26 @@ Rectangle {
                     anchors.right: parent.right
                     anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: 4
+                    spacing: 2
 
+                    AppIconButton {
+                        objectName: "galleryZoomOutButton"
+                        controlSize: 28
+                        renderedIconSize: 16
+                        iconSource: root.iconPrefix + "zoom-out.svg"
+                        toolTipText: qsTr("Zoom out")
+                        enabled: galleryWorkspace.currentPreviewPath.length > 0 && root.controller.galleryImageReady
+                        onClicked: galleryWorkspace.zoomBy(1.0 / 1.25)
+                    }
+                    AppIconButton {
+                        objectName: "galleryZoomInButton"
+                        controlSize: 28
+                        renderedIconSize: 16
+                        iconSource: root.iconPrefix + "zoom-in.svg"
+                        toolTipText: qsTr("Zoom in")
+                        enabled: galleryWorkspace.currentPreviewPath.length > 0 && root.controller.galleryImageReady
+                        onClicked: galleryWorkspace.zoomBy(1.25)
+                    }
                     AppIconButton {
                         id: actualPixelsButton
                         objectName: "galleryActualPixelsButton"
@@ -913,7 +988,7 @@ Rectangle {
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.bottom: galleryInfoRail.top
-                color: Theme.softHover
+                color: Theme.canvasBackground
                 clip: true
 
                 Flickable {
@@ -1000,6 +1075,10 @@ Rectangle {
                         id: galleryProbeArea
                         anchors.fill: parent
                         hoverEnabled: true
+                        cursorShape: (galleryFlick.contentWidth > galleryFlick.width
+                                      || galleryFlick.contentHeight > galleryFlick.height)
+                                     ? (galleryFlick.dragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor)
+                                     : Qt.ArrowCursor
                         acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.BackButton | Qt.ForwardButton
                         preventStealing: false
                         onPositionChanged: function (mouse) {
@@ -1124,10 +1203,14 @@ Rectangle {
                 objectName: "galleryStrip"
                 anchors.fill: parent
                 anchors.margins: 8
-                // Reserve a real workspace footer so users always have a dependable
-                // blank target for the workspace context menu.
-                anchors.bottomMargin: 60
                 clip: true
+                function isBlankAt(x, y) {
+                    const item = itemAtIndex(indexAt(x + contentX, y + contentY));
+                    if (!item) return true;
+                    const localX = x + contentX - item.x;
+                    const localY = y + contentY - item.y;
+                    return localX < 4 || localX >= item.width - 4 || localY < 4 || localY >= item.height - 4;
+                }
                 model: root.displayMode === 2 && root.workspaceController.paneCount === 1
                        ? root.controller.thumbnails : null
                 currentIndex: 0
@@ -1392,29 +1475,32 @@ Rectangle {
                 ScrollBar.vertical: ScrollBar {
                     policy: ScrollBar.AsNeeded
                 }
-            }
 
-            MouseArea {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                anchors.margins: 8
-                height: 44
-                acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.BackButton | Qt.ForwardButton
-                onClicked: function (mouse) {
-                    if (mouse.button === Qt.BackButton) {
-                        root.controller.navigateBack();
-                        return;
-                    }
-                    if (mouse.button === Qt.ForwardButton) {
-                        root.controller.navigateForward();
-                        return;
-                    }
-                    if (mouse.button === Qt.RightButton) {
-                        const point = mapToItem(root, mouse.x, mouse.y);
-                        workspaceContextMenu.popup(point.x, point.y);
-                    } else {
-                        root.workspaceController.clearSelection();
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: root.contentInteractionEnabled
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.BackButton | Qt.ForwardButton
+                    propagateComposedEvents: true
+                    onClicked: function (mouse) {
+                        if (mouse.button === Qt.BackButton) {
+                            root.controller.navigateBack();
+                            return;
+                        }
+                        if (mouse.button === Qt.ForwardButton) {
+                            root.controller.navigateForward();
+                            return;
+                        }
+                        const blank = galleryStrip.isBlankAt(mouse.x, mouse.y);
+                        if (blank && mouse.button === Qt.RightButton) {
+                            const point = mapToItem(root, mouse.x, mouse.y);
+                            workspaceContextMenu.popup(point.x, point.y);
+                            return;
+                        }
+                        if (blank) {
+                            root.workspaceController.clearSelection();
+                            galleryStrip.forceActiveFocus(Qt.MouseFocusReason);
+                        }
+                        mouse.accepted = blank;
                     }
                 }
             }
@@ -1479,10 +1565,9 @@ Rectangle {
             anchors.left: parent.left
             anchors.leftMargin: 12
             anchors.verticalCenter: parent.verticalCenter
-            text: root.displayMode === 2 && galleryWorkspace.pixelProbeText.length > 0
-                  ? galleryWorkspace.pixelProbeText : root.workspaceController.statusText
+            text: root.workspaceController.statusText
             color: Theme.mutedInk
-            font.family: root.displayMode === 2 && galleryWorkspace.pixelProbeText.length > 0 ? Theme.monoFont : Theme.uiFont
+            font.family: Theme.uiFont
             font.pixelSize: 12
         }
     }

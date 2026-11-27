@@ -105,8 +105,9 @@ Rectangle {
             objectName: "paneLocationFrame-" + root.paneIndex
             anchors.left: navigationButtons.right
             anchors.leftMargin: 4
-            anchors.right: selectionCount.visible ? selectionCount.left : closeButton.left
-            anchors.rightMargin: 6
+            anchors.right: selectionCount.visible ? selectionCount.left
+                         : closeButton.visible ? closeButton.left : parent.right
+            anchors.rightMargin: selectionCount.visible || closeButton.visible ? 6 : 8
             anchors.verticalCenter: navigationButtons.verticalCenter
             height: 28
             radius: 5
@@ -402,9 +403,9 @@ Rectangle {
 
         Text {
             id: selectionCount
-            visible: root.multiplePanes && root.width >= 520 && root.controller.selectionCount > 0
-            anchors.right: closeButton.left
-            anchors.rightMargin: 7
+            visible: root.multiplePanes && root.width >= 300 && root.controller.selectionCount > 0
+            anchors.right: closeButton.visible ? closeButton.left : parent.right
+            anchors.rightMargin: closeButton.visible ? 7 : 8
             anchors.verticalCenter: navigationButtons.verticalCenter
             text: qsTranslate("BrowserPane", "%1 selected").arg(root.controller.selectionCount)
             color: Theme.mutedInk
@@ -414,6 +415,7 @@ Rectangle {
         AppIconButton {
             id: closeButton
             objectName: "closePaneButton-" + root.paneIndex
+            visible: root.multiplePanes
             anchors.right: parent.right
             anchors.rightMargin: 4
             anchors.verticalCenter: navigationButtons.verticalCenter

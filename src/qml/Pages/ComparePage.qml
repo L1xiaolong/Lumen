@@ -25,9 +25,10 @@ Item {
     property string iconPrefix: Theme.iconPrefix
     property real titleBarHeight: Theme.toolbarHeight
     property real captionButtonsWidth: 0
-    readonly property rect titleBarLeftControls: Qt.rect(toolbarControls.x, 0,
+    readonly property rect titleBarLeftControls: Qt.rect(backButton.x, 0,
+                                                       backButton.width, toolbar.height)
+    readonly property rect titleBarRightControls: Qt.rect(toolbarControls.x, 0,
                                                         toolbarControls.width, toolbar.height)
-    readonly property rect titleBarRightControls: Qt.rect(0, 0, 0, 0)
     readonly property var comparisonCanvas: comparisonCanvasLoader.item
 
     signal closeRequested()
@@ -230,9 +231,23 @@ Item {
             color: Theme.opticalGray
         }
 
+        AppIconButton {
+            id: backButton
+            objectName: "compareBackButton"
+            anchors.left: parent.left
+            anchors.leftMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            controlSize: 28
+            renderedIconSize: 16
+            iconSource: root.iconPrefix + "back.svg"
+            toolTipText: qsTr("Back to browse")
+            shortcutText: "Esc"
+            onClicked: root.closeRequested()
+        }
+
         RowLayout {
             id: toolbarControls
-            x: Math.max(8, (parent.width - root.captionButtonsWidth - width) / 2)
+            x: Math.max(backButton.x + backButton.width + 8, (parent.width - root.captionButtonsWidth - width) / 2)
             anchors.verticalCenter: parent.verticalCenter
             spacing: 2
 
@@ -242,7 +257,8 @@ Item {
                 checkable: true
                 checked: root.controller.presentationMode === 0
                 iconSource: root.iconPrefix + "side-by-side.svg"
-                toolTipText: qsTr("Side by side · Hold Ctrl while zooming or panning to adjust one image")
+                toolTipText: qsTr("Side by side · Hold %1 while zooming or panning to adjust one image")
+                    .arg(Qt.platform.os === "osx" ? "Cmd/Ctrl" : "Ctrl")
                 onClicked: root.controller.setPresentationMode(0)
             }
             AppIconButton {
@@ -291,6 +307,17 @@ Item {
                 toolTipText: qsTr("100% (1:1)")
                 shortcutText: "1"
                 onClicked: root.controller.actualPixelsAll()
+            }
+            AppIconButton {
+                objectName: "compareSynchronizedButton"
+                controlSize: 28
+                renderedIconSize: 16
+                checkable: true
+                checked: root.controller.synchronized
+                iconSource: root.iconPrefix + "sync.svg"
+                toolTipText: qsTr("Synchronize zoom and pan · Hold %1 to adjust one image")
+                    .arg(Qt.platform.os === "osx" ? "Cmd/Ctrl" : "Ctrl")
+                onClicked: root.controller.setSynchronized(checked)
             }
             AppIconButton {
                 objectName: "compareSmoothDisplayButton"
@@ -458,12 +485,41 @@ Item {
             height: 1
             color: "#B8B8B8"
         }
-        Rectangle {
+        Item {
             visible: root.controller.presentationMode === 1 && root.paths.length === 2
-            x: root.comparisonCanvas ? root.comparisonCanvas.dividerPosition - 0.5 : 0
-            width: 1
+            x: root.comparisonCanvas ? root.comparisonCanvas.dividerPosition - 12 : -12
+            width: 24
             height: parent.height
-            color: Theme.pressedSurface
+            z: 25
+
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: 2
+                height: parent.height
+                color: "#80000000"
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: 1
+                    height: parent.height
+                    color: "#CCFFFFFF"
+                }
+            }
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: 22
+                height: 36
+                radius: 11
+                color: Theme.inspectionOverlay
+                border.width: 1
+                border.color: Theme.inspectionOverlayBorder
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 3
+                    Rectangle { width: 1.5; height: 14; radius: 0.75; color: Theme.inspectionText }
+                    Rectangle { width: 1.5; height: 14; radius: 0.75; color: Theme.inspectionText }
+                }
+            }
         }
 
         Repeater {
@@ -502,6 +558,29 @@ Item {
                     border.width: root.selectedSlot === comparisonCell.index ? 2 : 0
                     border.color: Theme.primaryButton
                     z: 20
+                }
+
+                Rectangle {
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 8
+                    visible: root.controller.holdCandidate && comparisonCell.index === 0
+                    width: candidateLabel.implicitWidth + 12
+                    height: 20
+                    radius: 4
+                    color: Theme.inspectionOverlay
+                    border.width: 1
+                    border.color: Theme.inspectionOverlayBorder
+                    z: 21
+                    Text {
+                        id: candidateLabel
+                        anchors.centerIn: parent
+                        text: qsTr("B · Candidate")
+                        color: Theme.inspectionAccentText
+                        font.family: Theme.uiFont
+                        font.pixelSize: Theme.metadataFontSize
+                        font.weight: Theme.emphasisFontWeight
+                    }
                 }
 
                 Rectangle {

@@ -119,15 +119,37 @@ Rectangle {
             x: 12; y: 16
             width: scroll.width - 24
             spacing: 12
-            RawParameterComboBox {
-                id: presetCombo
-                objectName: "rawPresetSelector"
+            Column {
                 visible: root.hasItem
                 width: parent.width
-                model: [qsTr("None")].concat(root.controller ? root.controller.presetNames : [])
-                currentIndex: root.controller && root.controller.selectedPreset.length > 0
-                    ? Math.max(0, model.indexOf(root.controller.selectedPreset)) : 0
-                onActivated: function(index) { root.finishEditing(); root.controller.selectPreset(index > 0 ? currentText : "") }
+                spacing: 8
+                RawParameterComboBox {
+                    id: presetCombo
+                    objectName: "rawPresetSelector"
+                    width: parent.width
+                    model: [qsTr("None")].concat(root.controller ? root.controller.presetNames : [])
+                    currentIndex: root.controller && root.controller.selectedPreset.length > 0
+                        ? Math.max(0, model.indexOf(root.controller.selectedPreset)) : 0
+                    onActivated: function(index) { root.finishEditing(); root.controller.selectPreset(index > 0 ? currentText : "") }
+                }
+                Row {
+                    width: parent.width
+                    spacing: 8
+                    SettingsButton {
+                        objectName: "rawSavePresetButton"
+                        width: (parent.width - 8) / 2
+                        text: qsTr("Save preset…")
+                        onClicked: root.beginSavePreset(false)
+                    }
+                    SettingsButton {
+                        objectName: "rawDeletePresetButton"
+                        width: (parent.width - 8) / 2
+                        text: qsTr("Delete preset")
+                        destructive: true
+                        enabled: root.hasItem && root.controller.selectedPreset.length > 0
+                        onClicked: { root.finishEditing(); const error = root.controller.deleteSelectedPreset(); if (error) root.showNotice(error, true) }
+                    }
+                }
             }
             Text {
                 visible: !root.hasItem
@@ -370,30 +392,17 @@ Column {
     width: parent.width
     spacing: 8
     SettingsButton {
-        objectName: "rawDeletePresetButton"
+        objectName: "rawApplyFolderButton"
         width: parent.width
-        text: qsTr("Delete preset")
-        destructive: true
-        enabled: root.hasItem && root.controller.selectedPreset.length > 0
-        onClicked: { root.finishEditing(); const error = root.controller.deleteSelectedPreset(); if (error) root.showNotice(error, true) }
-    }
-    SettingsButton {
-        objectName: "rawSavePresetButton"
-        width: parent.width
-        text: qsTr("Save preset…")
-        onClicked: root.beginSavePreset(false)
+        primary: true
+        text: qsTr("Apply to folder")
+        onClicked: { root.finishEditing(); const error = root.controller.applyToFolder(); if (error) root.showNotice(error, true) }
     }
     SettingsButton {
         objectName: "rawSaveFolderPresetButton"
         width: parent.width
-        text: qsTr("Save + folder…")
+        text: qsTr("Save preset & apply to folder…")
         onClicked: root.beginSavePreset(true)
-    }
-    SettingsButton {
-        objectName: "rawApplyFolderButton"
-        width: parent.width
-        text: qsTr("Apply to folder")
-        onClicked: { root.finishEditing(); const error = root.controller.applyToFolder(); if (error) root.showNotice(error, true) }
     }
 }
             }

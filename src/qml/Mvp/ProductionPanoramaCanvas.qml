@@ -137,7 +137,7 @@ PanoramaCanvas {
             visible: canvas.detailMessage.length > 0
             width: detailText.implicitWidth + 20
             height: detailText.implicitHeight + 12
-            color: Theme.sensorWhite
+            color: Qt.rgba(Theme.raisedSurface.r, Theme.raisedSurface.g, Theme.raisedSurface.b, 0.92)
             border.color: Theme.opticalGray
             radius: 6
             Text {
@@ -152,8 +152,8 @@ PanoramaCanvas {
 
         Rectangle {
             width: controls.implicitWidth + 12
-            height: controls.implicitHeight + 10
-            color: Theme.sensorWhite
+            height: controls.implicitHeight + 8
+            color: Qt.rgba(Theme.raisedSurface.r, Theme.raisedSurface.g, Theme.raisedSurface.b, 0.92)
             border.color: Theme.opticalGray
             radius: 8
 

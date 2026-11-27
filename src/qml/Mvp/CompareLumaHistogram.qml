@@ -6,7 +6,7 @@ Rectangle {
 
     required property var controller
     property int slot: 0
-    readonly property color plotColor: "#000000"
+    readonly property color plotColor: "#E8ECEF"
     property var histogramData: {
         const revision = root.controller.histogramRevision
         return root.controller.histogram(root.slot)
@@ -14,10 +14,10 @@ Rectangle {
 
     implicitWidth: 156
     implicitHeight: 64
-    radius: 3
-    color: "#FFFFFF"
+    radius: 4
+    color: Theme.inspectionOverlayMuted
     border.width: 1
-    border.color: "#80000000"
+    border.color: Theme.inspectionOverlayBorder
     clip: true
 
     function request() {

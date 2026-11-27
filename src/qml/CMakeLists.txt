@@ -154,6 +154,8 @@ set(_mvpview_qml_icons
     ${PROJECT_SOURCE_DIR}/assets/icons/ui/rotate-ccw-square.svg
     ${PROJECT_SOURCE_DIR}/assets/icons/ui/image-resize.svg
     ${PROJECT_SOURCE_DIR}/assets/icons/ui/settings.svg
+    ${PROJECT_SOURCE_DIR}/assets/icons/ui/sidebar.svg
+    ${PROJECT_SOURCE_DIR}/assets/icons/ui/sync.svg
 )
 qt_add_resources(LumenQml "mvpview_qml_icons"
     PREFIX "/icons/ui"

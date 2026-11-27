@@ -9,6 +9,8 @@ Item {
     property var controller: null
     property bool active: false
     property int selectedChannel: 0
+    property bool logScale: false
+    property real hoverFraction: -1
     property string observedPath: controller ? controller.path : ""
     property var histogramData: {
         const revision = controller ? controller.histogramRevision : 0
@@ -29,6 +31,8 @@ Item {
     onPendingLabelChanged: graph.requestPaint()
     onUnavailableLabelChanged: graph.requestPaint()
     onSelectedChannelChanged: graph.requestPaint()
+    onLogScaleChanged: graph.requestPaint()
+    onHoverFractionChanged: graph.requestPaint()
     implicitHeight: layout.implicitHeight
     function channelName(channel) { return channel.name || "" }
     function formatStatistic(value, decimals) {
@@ -46,7 +50,7 @@ Item {
         if (active && controller && controller.path.length > 0) controller.requestHistogram(1)
     }
     onActiveChanged: requestHistogram()
-    onObservedPathChanged: { selectedChannel = 0; requestHistogram() }
+    onObservedPathChanged: { selectedChannel = 0; hoverFraction = -1; requestHistogram() }
     onChannelsChanged: if (selectedChannel >= channels.length) selectedChannel = 0
     onHistogramDataChanged: graph.requestPaint()
     Connections {
@@ -76,13 +80,29 @@ Item {
                 objectName: "histogramChannelSelector"
                 anchors.left: channelLabel.right
                 anchors.leftMargin: 12
-                anchors.right: parent.right
+                anchors.right: logScaleButton.left
+                anchors.rightMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
                 model: root.channels.map(function(channel) { return root.channelName(channel) })
                 currentIndex: root.channels.length > 0 ? root.selectedChannel : -1
                 enabled: root.histogramData.valid === true && root.channels.length > 0
                 Accessible.name: channelLabel.text
                 onActivated: function(index) { root.selectedChannel = index }
+            }
+            SettingsButton {
+                id: logScaleButton
+                objectName: "histogramLogScaleButton"
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                implicitWidth: 56
+                text: root.logScale ? qsTr("Log") : qsTr("Linear")
+                checkable: true
+                checked: root.logScale
+                enabled: root.histogramData.valid === true && root.channels.length > 0
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+                ToolTip.text: qsTr("Toggle logarithmic histogram scale")
+                onToggled: root.logScale = checked
             }
         }
         Rectangle {
@@ -163,9 +183,13 @@ Item {
                         return
                     context.beginPath()
                     context.moveTo(left, bottom)
+                    const logDenom = root.logScale ? Math.log(1 + maximum) : 1
                     for (let point = 0; point < samples; ++point) {
                         const x = left + point * (right - left) / (samples - 1)
-                        const y = bottom - (bottom - top) * values[point] / maximum
+                        const ratio = root.logScale
+                            ? (logDenom > 0 ? Math.log(1 + values[point]) / logDenom : 0)
+                            : (values[point] / maximum)
+                        const y = bottom - (bottom - top) * ratio
                         context.lineTo(x, y)
                     }
                     context.lineTo(right, bottom)
@@ -176,7 +200,39 @@ Item {
                     context.strokeStyle = color
                     context.lineWidth = 1.25
                     context.stroke()
+
+                    if (root.hoverFraction >= 0 && root.hoverFraction <= 1) {
+                        const hoverX = left + root.hoverFraction * (right - left)
+                        const sampleIndex = Math.max(0, Math.min(samples - 1, Math.round(root.hoverFraction * (samples - 1))))
+                        const sampleValue = minimum * (1 - root.hoverFraction) + maximumValue * root.hoverFraction
+                        const sampleCount = values[sampleIndex]
+                        context.strokeStyle = Theme.probeBlue
+                        context.lineWidth = 1
+                        context.beginPath()
+                        context.moveTo(Math.round(hoverX) + 0.5, top)
+                        context.lineTo(Math.round(hoverX) + 0.5, bottom)
+                        context.stroke()
+
+                        const readout = root.formatAxisValue(sampleValue) + " · " + sampleCount
+                        context.fillStyle = Theme.graphiteInk
+                        context.textAlign = "right"
+                        context.fillText(readout, right, top + 11)
+                    }
                 }
+            }
+            MouseArea {
+                anchors.fill: graph
+                hoverEnabled: true
+                acceptedButtons: Qt.NoButton
+                onPositionChanged: function(mouse) {
+                    const left = 28
+                    const right = graph.width - 24
+                    if (right > left && mouse.x >= left && mouse.x <= right)
+                        root.hoverFraction = (mouse.x - left) / (right - left)
+                    else
+                        root.hoverFraction = -1
+                }
+                onExited: root.hoverFraction = -1
             }
 
 

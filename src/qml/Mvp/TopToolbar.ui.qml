@@ -20,6 +20,9 @@ Rectangle {
     property string newFolderShortcutText: ""
     property string compareShortcutText: ""
     property string settingsShortcutText: ""
+    property string navigatorShortcutText: ""
+    property bool navigatorVisible: true
+    property bool inspectorVisible: false
     property bool settingsVisible: false
     property bool compareEnabled: false
     property bool activePaneAvailable: true
@@ -31,9 +34,9 @@ Rectangle {
     property real navigationWidth: Theme.sidebarWidth
     property real captionButtonsWidth: 0
     readonly property rect leftControlsBounds: Qt.rect(0, 0, dragSpace.x + 16, height)
-    readonly property rect rightControlsBounds: settingsVisible ? Qt.rect(settingsButton.x + 16, 0,
-                                                       settingsButton.width, height) : Qt.rect(0, 0, 0, 0)
+    readonly property rect rightControlsBounds: Qt.rect(rightControls.x + 16, 0, rightControls.width, height)
 
+    property alias navigatorControl: navigatorToggleButton
     property alias openFolderControl: openFolderButton
     property alias newFolderControl: newFolderButton
     property alias folderCompareControl: folderCompareButton
@@ -43,6 +46,7 @@ Rectangle {
     property alias sortControl: sortButton
     property alias compareControl: compareButton
     property alias smoothDisplayControl: smoothDisplayButton
+    property alias inspectorControl: inspectorToggleButton
     property alias settingsControl: settingsButton
 
     RowLayout {
@@ -52,6 +56,17 @@ Rectangle {
         spacing: 4
         RowLayout {
             spacing: 2
+            AppIconButton {
+                id: navigatorToggleButton
+                objectName: "navigatorToggleButton"
+                controlSize: root.toolbarButtonSize
+                renderedIconSize: root.toolbarIconSize
+                checkable: true
+                checked: root.navigatorVisible
+                iconSource: root.iconPrefix + "sidebar.svg"
+                toolTipText: root.navigatorVisible ? qsTr("Hide sidebar") : qsTr("Show sidebar")
+                shortcutText: root.navigatorShortcutText
+            }
             AppIconButton {
                 id: openFolderButton
                 objectName: "openFolderButton"
@@ -166,15 +181,29 @@ Rectangle {
             }
         }
         Item { id: dragSpace; Layout.fillWidth: true; Layout.minimumWidth: 48 }
-        AppIconButton {
-            id: settingsButton
-            objectName: "toolbarSettingsButton"
-            visible: root.settingsVisible
-            controlSize: root.toolbarButtonSize
-            renderedIconSize: root.toolbarIconSize
-            iconSource: root.iconPrefix + "settings.svg"
-            toolTipText: qsTr("Settings")
-            shortcutText: root.settingsShortcutText
+        RowLayout {
+            id: rightControls
+            spacing: 2
+            AppIconButton {
+                id: inspectorToggleButton
+                objectName: "toolbarInspectorButton"
+                controlSize: root.toolbarButtonSize
+                renderedIconSize: root.toolbarIconSize
+                checkable: true
+                checked: root.inspectorVisible
+                iconSource: root.iconPrefix + "info.svg"
+                toolTipText: root.inspectorVisible ? qsTr("Hide inspector") : qsTr("Show properties inspector")
+            }
+            AppIconButton {
+                id: settingsButton
+                objectName: "toolbarSettingsButton"
+                visible: root.settingsVisible
+                controlSize: root.toolbarButtonSize
+                renderedIconSize: root.toolbarIconSize
+                iconSource: root.iconPrefix + "settings.svg"
+                toolTipText: qsTr("Settings")
+                shortcutText: root.settingsShortcutText
+            }
         }
 
     }

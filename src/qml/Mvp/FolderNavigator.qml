@@ -8,7 +8,10 @@ import "."
 Rectangle {
     id: root
     required property var controller
+    property var workspaceController: null
     property bool browsingEnabled: true
+    property string contextPath: ""
+    property bool contextIsRecent: false
     property string iconPrefix: Theme.iconPrefix
     property string platformName: Qt.platform.os
 
@@ -211,9 +214,16 @@ Rectangle {
             id: sidebarPlaceMouse
             anchors.fill: parent
             hoverEnabled: true
-            acceptedButtons: Qt.LeftButton
-            onClicked: {
+            cursorShape: Qt.PointingHandCursor
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            onClicked: function(mouse) {
                 const entry = parent.entry
+                if (mouse.button === Qt.RightButton) {
+                    root.contextPath = String(entry.path)
+                    root.contextIsRecent = entry.kind === "recent"
+                    sidebarMenu.popup()
+                    return
+                }
                 if (entry.kind === "recent")
                     root.controller.openRecentDirectory(entry.path)
                 else
@@ -234,6 +244,8 @@ Rectangle {
             width: navigationScroll.availableWidth
             spacing: 0
 
+            readonly property var recentItems: root.browsingEnabled ? root.recentEntries() : []
+
             Item {
                 Layout.fillWidth: true
                 implicitHeight: 8
@@ -241,7 +253,8 @@ Rectangle {
 
             Rectangle {
                 Layout.fillWidth: true
-                implicitHeight: 26
+                visible: recentItems.length > 0
+                implicitHeight: visible ? 26 : 0
                 color: "transparent"
 
                 Text {
@@ -259,7 +272,7 @@ Rectangle {
             }
 
             Repeater {
-                model: root.browsingEnabled ? root.recentEntries() : []
+                model: recentItems
                 delegate: SidebarPlace {
                     required property var modelData
                     entry: modelData
@@ -268,7 +281,8 @@ Rectangle {
 
             Item {
                 Layout.fillWidth: true
-                implicitHeight: 16
+                visible: recentItems.length > 0
+                implicitHeight: visible ? 16 : 0
             }
 
             Rectangle {
@@ -568,10 +582,54 @@ Rectangle {
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 hoverEnabled: true
-                acceptedButtons: Qt.LeftButton
-                onClicked: root.controller.openDirectory(treeDelegate.filePath)
+                cursorShape: Qt.PointingHandCursor
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: function(mouse) {
+                    if (mouse.button === Qt.RightButton) {
+                        root.contextPath = treeDelegate.filePath
+                        root.contextIsRecent = false
+                        sidebarMenu.popup()
+                        return
+                    }
+                    root.controller.openDirectory(treeDelegate.filePath)
+                }
             }
         }
 
+    }
+
+    AppMenu {
+        id: sidebarMenu
+        objectName: "sidebarContextMenu"
+        AppMenuItem {
+            text: qsTr("Open folder")
+            onTriggered: {
+                if (root.contextIsRecent)
+                    root.controller.openRecentDirectory(root.contextPath)
+                else
+                    root.controller.openDirectory(root.contextPath)
+            }
+        }
+        AppMenuItem {
+            text: qsTr("Open in new pane")
+            visible: !!root.workspaceController
+            enabled: !!root.workspaceController && root.workspaceController.canAddPane
+            onTriggered: {
+                if (!root.workspaceController || !root.workspaceController.canAddPane)
+                    return
+                root.workspaceController.addFileManagerPane()
+                const pane = root.workspaceController.activePane
+                if (pane)
+                    pane.openDirectory(root.contextPath)
+            }
+        }
+        AppMenuSeparator {
+            visible: root.samePath(root.contextPath, root.controller.currentDirectory)
+        }
+        AppMenuItem {
+            visible: root.samePath(root.contextPath, root.controller.currentDirectory)
+            text: Qt.platform.os === "osx" ? qsTr("Open in Finder") : qsTr("Open in File Explorer")
+            onTriggered: root.controller.openCurrentDirectoryInFileManager()
+        }
     }
 }
