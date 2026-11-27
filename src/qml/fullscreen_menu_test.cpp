@@ -345,6 +345,28 @@ int testFullScreenMenu(QQuickWindow& window, QWindow::Visibility initialVisibili
                     << "menu visible" << menu->property("visible").toBool();
         return failure("the browser and its window placement were not restored");
     }
+
+    // Re-enter and leave with a double-click on the image canvas: the pointer
+    // equivalent of the Escape exit.
+    if (!QMetaObject::invokeMethod(&window, "openFullScreen",
+            Q_ARG(QVariant, QVariant(QStringList{fixturePath})), Q_ARG(QVariant, 0)))
+        return failure("could not re-open the full-screen viewer");
+    if (!QTest::qWaitFor([&] {
+            return window.property("showingFullScreen").toBool() && viewer.isVisible() &&
+                   viewer.isExposed();
+        }, 12000))
+        return failure("the full-screen viewer did not re-open and render");
+    QTest::mouseDClick(&viewer, Qt::LeftButton, Qt::NoModifier,
+                       QPoint(viewer.width() / 2, viewer.height() / 2));
+    if (!QTest::qWaitFor([&] {
+            return window.visibility() == initialVisibility && window.geometry() == initialGeometry &&
+                   !viewer.isVisible() && !window.property("showingFullScreen").toBool() &&
+                   !window.property("fullScreenTransitioning").toBool();
+        }, 5000)) {
+        qCritical() << "Double-click left browser" << window.visibility() << window.geometry()
+                    << "viewer visible" << viewer.isVisible();
+        return failure("double-click did not exit the full-screen viewer");
+    }
     return 0;
 }
 

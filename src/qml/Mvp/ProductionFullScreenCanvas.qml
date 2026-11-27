@@ -5,6 +5,7 @@ ImageCanvas {
     property var controller: null
     property var settingsController: null
     signal contextMenuRequested(point position)
+    signal closeRequested()
     presentationMode: 0
     viewSynchronized: false
     backgroundColor: Theme.canvasBackground
@@ -24,6 +25,14 @@ ImageCanvas {
     TapHandler {
         acceptedButtons: Qt.RightButton
         onTapped: function(eventPoint) { root.contextMenuRequested(eventPoint.position) }
+    }
+
+    // Double-click exits the presentation, matching the Escape shortcut. The
+    // passive grab keeps image panning (the canvas's own left-button drag)
+    // working; a tap that turns into a drag is cancelled automatically.
+    TapHandler {
+        acceptedButtons: Qt.LeftButton
+        onDoubleTapped: root.closeRequested()
     }
 
     // Deliver the scene's pointer position to the pixel probe alongside the canvas hover events.

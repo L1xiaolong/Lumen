@@ -9,6 +9,7 @@ PanoramaCanvas {
     property bool pixelInspectionEnabled: true
     property string iconPrefix: Theme.iconPrefix
     signal contextMenuRequested(point position)
+    signal closeRequested()
 
     onControllerChanged: if (controller) controller.attachPanorama(canvas)
 
@@ -33,6 +34,13 @@ PanoramaCanvas {
     TapHandler {
         acceptedButtons: Qt.RightButton
         onTapped: function(eventPoint) { canvas.contextMenuRequested(eventPoint.position) }
+    }
+
+    // Double-click exits the presentation, matching the Escape shortcut. A drag
+    // to turn the panorama takes the grab and cancels the pending tap first.
+    TapHandler {
+        acceptedButtons: Qt.LeftButton
+        onDoubleTapped: canvas.closeRequested()
     }
 
     HoverHandler {

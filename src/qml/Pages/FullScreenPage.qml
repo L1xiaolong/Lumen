@@ -143,6 +143,11 @@ Item {
         ignoreUnknownSignals: true
         function onImageFrameRendered() { root.imageFrameReady() }
         function onContextMenuRequested(position) { fullScreenContextMenu.popup(position.x, position.y) }
+        // Double-click on the canvas exits, gated exactly like the Escape shortcut.
+        function onCloseRequested() {
+            if (root.imageShortcutsEnabled)
+                root.closeRequested()
+        }
     }
 
     Binding {
@@ -188,6 +193,11 @@ Item {
             fullScreenContextMenu.popup(position.x, position.y)
         }
         function onImageFrameRendered() { root.imageFrameReady() }
+        // Double-click on the canvas exits, gated exactly like the Escape shortcut.
+        function onCloseRequested() {
+            if (root.imageShortcutsEnabled)
+                root.closeRequested()
+        }
     }
 
     Connections {
