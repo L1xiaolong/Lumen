@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import "."
 
 Dialog {
@@ -17,10 +18,14 @@ Dialog {
     modal: true
     focus: true
     width: 380
-    height: 224
+    // The content column decides the height, so long descriptions and error
+    // messages wrap and grow the dialog instead of clipping or overlapping.
+    height: contentLayout.implicitHeight + topPadding + bottomPadding
     x: parent ? Math.round((parent.width - width) / 2) : 0
     y: parent ? Math.round((parent.height - height) / 2) : 0
-    padding: 0
+    padding: 22
+    topPadding: 20
+    bottomPadding: 20
     closePolicy: Popup.CloseOnEscape
 
     function openWith(value) {
@@ -30,7 +35,8 @@ Dialog {
     }
 
     function submit() {
-        submitted(inputField.text)
+        if (inputField.text.trim().length > 0)
+            submitted(inputField.text)
     }
 
     function complete(errorMessage) {
@@ -63,108 +69,63 @@ Dialog {
         border.width: 1
     }
 
-    contentItem: Item {
+    contentItem: ColumnLayout {
+        id: contentLayout
+        spacing: 12
+
         Text {
-            x: 22
-            y: 20
+            Layout.fillWidth: true
             text: root.dialogTitle
             color: Theme.graphiteInk
             font.family: Theme.uiFont
-            font.pixelSize: 17
+            font.pixelSize: Theme.titleFontSize
             font.weight: Theme.emphasisFontWeight
         }
 
         Text {
-            x: 22
-            y: 51
-            width: parent.width - 44
+            Layout.fillWidth: true
+            visible: root.description.length > 0
             text: root.description
             color: Theme.mutedInk
-            elide: Text.ElideRight
+            wrapMode: Text.Wrap
             font.family: Theme.uiFont
-            font.pixelSize: 12
+            font.pixelSize: Theme.captionFontSize
         }
 
-        TextField {
+        AppTextField {
             id: inputField
-            x: 22
-            y: 79
-            width: parent.width - 44
-            height: 38
-            leftPadding: 11
-            rightPadding: 11
-            selectByMouse: true
-            color: Theme.graphiteInk
-            font.family: Theme.uiFont
-            font.pixelSize: 13
+            objectName: "appTextInputField"
+            Layout.fillWidth: true
             onAccepted: root.submit()
             onTextEdited: errorLabel.text = ""
-            background: Rectangle {
-                color: Theme.paperWhite
-                radius: 6
-                border.color: inputField.activeFocus ? Theme.probeBlue : Theme.opticalGray
-                border.width: inputField.activeFocus ? 2 : 1
-            }
         }
 
         Text {
             id: errorLabel
-            x: 22
-            y: 124
-            width: parent.width - 44
+            Layout.fillWidth: true
+            visible: text.length > 0
             color: Theme.danger
-            elide: Text.ElideRight
+            wrapMode: Text.Wrap
             font.family: Theme.uiFont
-            font.pixelSize: 11
+            font.pixelSize: Theme.metadataFontSize
         }
 
-        Button {
-            id: cancelButton
-            x: parent.width - 204
-            y: 168
-            width: 82
-            height: 34
-            text: qsTr("Cancel")
-            onClicked: root.close()
-            contentItem: Text {
-                text: cancelButton.text
-                color: Theme.graphiteInk
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                font.family: Theme.uiFont
-                font.pixelSize: 13
+        RowLayout {
+            Layout.alignment: Qt.AlignRight
+            Layout.topMargin: 2
+            spacing: 8
+            SettingsButton {
+                id: cancelButton
+                text: qsTr("Cancel")
+                onClicked: root.close()
             }
-            background: Rectangle {
-                radius: 6
-                color: cancelButton.down ? Theme.pressedSurface : cancelButton.hovered ? Theme.softHover : "transparent"
-                border.color: Theme.probeBlue
-                border.width: cancelButton.visualFocus ? 2 : 0
-            }
-        }
-
-        Button {
-            id: acceptButton
-            x: parent.width - 114
-            y: 168
-            width: 92
-            height: 34
-            text: root.acceptText
-            enabled: inputField.text.trim().length > 0
-            onClicked: root.submit()
-            contentItem: Text {
-                text: acceptButton.text
-                color: acceptButton.enabled ? Theme.primaryButtonText : Theme.faintInk
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                font.family: Theme.uiFont
-                font.pixelSize: 13
-                font.weight: Theme.emphasisFontWeight
-            }
-            background: Rectangle {
-                radius: 6
-                color: !acceptButton.enabled ? Theme.pressedSurface
-                      : acceptButton.down ? Theme.primaryButton
-                      : acceptButton.hovered ? Theme.primaryButtonHover : Theme.primaryButton
+            SettingsButton {
+                id: acceptButton
+                objectName: "appTextInputAcceptButton"
+                text: root.acceptText
+                primary: true
+                enabled: inputField.text.trim().length > 0
+                onClicked: root.submit()
             }
         }
     }

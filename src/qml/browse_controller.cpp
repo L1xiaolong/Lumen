@@ -228,7 +228,6 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
     });
     refreshTimer_ = new QTimer(this);
     refreshDeadlineTimer_ = new QTimer(this);
-    recentCandidateTimer_ = new QTimer(this);
     filterModel_->setSourceModel(thumbnailModel_);
     if (!fileSystemModel_->property("_mvpviewNavigationConfigured").toBool()) {
         fileSystemModel_->setProperty("_mvpviewNavigationConfigured", true);
@@ -309,6 +308,7 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
                 setStatusText(QCoreApplication::translate("BrowseController", "Scanning %1… %2 items")
                                   .arg(QDir::toNativeSeparators(currentDirectory_))
                                   .arg(thumbnailModel_->rowCount()));
+                rememberRecentImageFolder(files);
             });
     connect(scanner_, &DirectoryScanner::scanFinished, this,
             [this](const QString& directory, const QVector<ImageFileRecord>& files,
@@ -375,17 +375,7 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
                     }
                 }
 
-                const bool directlyContainsImages =
-                    std::any_of(files.cbegin(), files.cend(),
-                                [](const ImageFileRecord& file) { return !file.isDirectory; });
-                if (directory == recentCandidateDirectory_ && directlyContainsImages) {
-                    if (!recentCandidateTimer_->isActive()) {
-                        recentCandidateTimer_->start();
-                    }
-                } else if (directory == recentCandidateDirectory_) {
-                    recentCandidateTimer_->stop();
-                    recentCandidateDirectory_.clear();
-                }
+                rememberRecentImageFolder(files);
             });
     refreshTimer_->setSingleShot(true);
     refreshTimer_->setInterval(250);
@@ -406,28 +396,6 @@ void BrowseController::initialize(const QString& initialDirectory, bool startEmp
     connect(refreshDeadlineTimer_, &QTimer::timeout, this, [this] {
         refreshTimer_->stop();
         rescanCurrentDirectory();
-    });
-    recentCandidateTimer_->setSingleShot(true);
-    recentCandidateTimer_->setInterval(10'000);
-    connect(recentCandidateTimer_, &QTimer::timeout, this, [this] {
-        if (recentCandidateDirectory_.isEmpty() ||
-            recentCandidateDirectory_ != currentDirectory_) {
-            return;
-        }
-        const auto& files = thumbnailModel_->files();
-        const bool directlyContainsImages =
-            std::any_of(files.cbegin(), files.cend(),
-                        [](const ImageFileRecord& file) { return !file.isDirectory; });
-        if (!directlyContainsImages) {
-            return;
-        }
-        recentFolders_.removeAll(currentDirectory_);
-        recentFolders_.prepend(currentDirectory_);
-        while (recentFolders_.size() > 8) {
-            recentFolders_.removeLast();
-        }
-        QSettings().setValue(QStringLiteral("browser/recentFolders"), recentFolders_);
-        emit recentFoldersChanged();
     });
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this,
             &BrowseController::clipboardStateChanged);
@@ -1586,6 +1554,7 @@ void BrowseController::openDirectoryInternal(const QString& path, bool addToHist
     setGalleryPath({});
     const QString previousDirectory = currentDirectory_;
     currentDirectory_ = info.absoluteFilePath();
+    recentImageFolderPending_ = true;
 #ifdef Q_OS_WIN
     if (windowsDriveRoot(previousDirectory) != windowsDriveRoot(currentDirectory_)
         && (previousDirectory.startsWith(QStringLiteral("//"))
@@ -1610,8 +1579,6 @@ void BrowseController::openDirectoryInternal(const QString& path, bool addToHist
         persistViewportScrollPositions();
     }
     emit recentLocationsChanged();
-    recentCandidateTimer_->stop();
-    recentCandidateDirectory_ = currentDirectory_;
     if (addToHistory &&
         (navigationHistoryIndex_ < 0 ||
          navigationHistory_.value(navigationHistoryIndex_) != currentDirectory_)) {
@@ -1659,6 +1626,22 @@ void BrowseController::openDirectoryInternal(const QString& path, bool addToHist
     } else {
         scanGeneration_ = scanner_->scanAsync(currentDirectory_);
     }
+}
+
+void BrowseController::rememberRecentImageFolder(const QVector<ImageFileRecord>& files) {
+    if (!recentImageFolderPending_ ||
+        std::none_of(files.cbegin(), files.cend(),
+                     [](const ImageFileRecord& file) { return !file.isDirectory; })) {
+        return;
+    }
+    recentImageFolderPending_ = false;
+    if (!recentFolders_.isEmpty() && recentFolders_.first() == currentDirectory_) return;
+
+    recentFolders_.removeAll(currentDirectory_);
+    recentFolders_.prepend(currentDirectory_);
+    while (recentFolders_.size() > 8) recentFolders_.removeLast();
+    QSettings().setValue(QStringLiteral("browser/recentFolders"), recentFolders_);
+    emit recentFoldersChanged();
 }
 
 void BrowseController::rescanCurrentDirectory() {

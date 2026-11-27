@@ -50,12 +50,16 @@ qt_add_qml_module(LumenQml
         Mvp/SettingsCard.qml
         Mvp/DiagnosticsPage.qml
         Mvp/AppIconButton.qml
+        Mvp/AppTextField.qml
+        Mvp/AppCheckBox.qml
         Mvp/AppTextInputDialog.qml
         Mvp/AppConfirmDialog.qml
         Mvp/UpdateDialog.qml
         Mvp/AppMenu.qml
         Mvp/AppMenuItem.qml
         Mvp/AppMenuSeparator.qml
+        Mvp/ItemContextMenu.qml
+        Mvp/SortMenu.qml
         Mvp/BrowserPane.qml
         Mvp/PaneHeader.qml
         Mvp/CompareLumaHistogram.qml

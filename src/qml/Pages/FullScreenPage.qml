@@ -28,44 +28,16 @@ Item {
         ? (panoramaCanvas ? panoramaCanvas.errorText : "") : controller.errorText
     property Item messageParent: root
     property bool loadingMessageVisible: false
-    property bool hudVisible: true
     readonly property bool imageLoading: root.visible && root.controller.loading
     onImageLoadingChanged: loadingMessageVisible = false
     onVisibleChanged: {
-        if (visible) {
-            hudVisible = true
-            hudIdleTimer.restart()
+        if (visible)
             return
-        }
-        hudIdleTimer.stop()
         // The menu lives in the window overlay, which stays visible when this page is hidden.
         fullScreenContextMenu.dismiss()
         propertiesDialog.close()
     }
     signal imageFrameReady()
-
-    Timer {
-        id: hudIdleTimer
-        interval: 2600
-        running: root.visible && root.hudVisible && !hudHover.hovered
-                 && !prevEdgeHover.hovered && !nextEdgeHover.hovered
-                 && !fullScreenContextMenu.visible && !propertiesDialog.visible
-                 && !renameDialog.visible && !trashDialog.visible
-        onTriggered: root.hudVisible = false
-    }
-
-    HoverHandler {
-        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-        blocking: false
-        onPointChanged: {
-            root.hudVisible = true
-            hudIdleTimer.restart()
-        }
-        onHoveredChanged: if (hovered) {
-            root.hudVisible = true
-            hudIdleTimer.restart()
-        }
-    }
 
     Timer {
         interval: 180
@@ -243,13 +215,12 @@ Item {
     }
 
     Item {
-        id: imageInfo
         objectName: "fullScreenImageInfo"
         visible: root.fileInformationVisible
         anchors.left: parent.left
+        anchors.right: parent.right
         anchors.top: parent.top
         anchors.margins: 16
-        width: Math.max(0, (hudBar.visible ? hudBar.x - 32 : parent.width - 32))
         height: imageName.implicitHeight
         z: 25
 
@@ -258,166 +229,13 @@ Item {
             objectName: "fullScreenImageInfoText"
             anchors.left: parent.left
             anchors.right: parent.right
-            text: [root.controller.fileName, root.resolutionText,
-                   root.controller.fileSizeText, root.zoomText].join(", ")
+            text: {
+                const position = root.controller.positionText
+                const fileName = root.controller.fileName
+                const heading = position.length > 0 ? "[" + position + "] " + fileName : fileName
+                return [heading, root.resolutionText, root.controller.fileSizeText, root.zoomText].join(", ")
+            }
             elide: Text.ElideRight
-        }
-    }
-
-    Rectangle {
-        id: hudBar
-        objectName: "fullScreenHudBar"
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.margins: 16
-        width: hudRow.implicitWidth + 12
-        height: 36
-        radius: 8
-        z: 27
-        color: Qt.rgba(Theme.raisedSurface.r, Theme.raisedSurface.g, Theme.raisedSurface.b, 0.92)
-        border.color: Theme.opticalGray
-        opacity: root.hudVisible || hudHover.hovered ? 1.0 : 0.0
-        visible: opacity > 0
-        Behavior on opacity { NumberAnimation { duration: Theme.fast } }
-
-        HoverHandler { id: hudHover; blocking: false }
-
-        Row {
-            id: hudRow
-            anchors.centerIn: parent
-            spacing: 2
-
-            Text {
-                visible: root.controller.positionText.length > 0
-                anchors.verticalCenter: parent.verticalCenter
-                leftPadding: 6
-                rightPadding: 6
-                text: root.controller.positionText
-                color: Theme.mutedInk
-                font.family: Theme.monoFont
-                font.pixelSize: Theme.captionFontSize
-            }
-            Rectangle {
-                visible: root.controller.positionText.length > 0
-                anchors.verticalCenter: parent.verticalCenter
-                width: 1
-                height: 16
-                color: Theme.opticalGray
-            }
-            AppIconButton {
-                objectName: "fullScreenPrevButton"
-                controlSize: 28
-                renderedIconSize: 16
-                visible: !root.panoramaActive
-                enabled: root.controller.canGoPrevious
-                iconSource: root.iconPrefix + "back.svg"
-                toolTipText: qsTr("Previous image")
-                shortcutText: "←"
-                onClicked: root.controller.showPrevious()
-            }
-            AppIconButton {
-                objectName: "fullScreenNextButton"
-                controlSize: 28
-                renderedIconSize: 16
-                visible: !root.panoramaActive
-                enabled: root.controller.canGoNext
-                iconSource: root.iconPrefix + "forward.svg"
-                toolTipText: qsTr("Next image")
-                shortcutText: "→"
-                onClicked: root.controller.showNext()
-            }
-            Rectangle {
-                visible: !root.panoramaActive
-                anchors.verticalCenter: parent.verticalCenter
-                width: 1
-                height: 16
-                color: Theme.opticalGray
-            }
-            AppIconButton {
-                objectName: "fullScreenHudFitButton"
-                controlSize: 28
-                renderedIconSize: 16
-                visible: !root.panoramaActive
-                iconSource: root.iconPrefix + "fit.svg"
-                toolTipText: qsTr("Fit to window")
-                shortcutText: "F"
-                onClicked: root.controller.fitImage()
-            }
-            AppIconButton {
-                objectName: "fullScreenHudActualButton"
-                controlSize: 28
-                renderedIconSize: 16
-                visible: !root.panoramaActive
-                iconSource: root.iconPrefix + "actual-size.svg"
-                toolTipText: qsTr("100% (1:1)")
-                shortcutText: "1"
-                onClicked: root.controller.actualPixels()
-            }
-            AppIconButton {
-                objectName: "fullScreenHudPropertiesButton"
-                controlSize: 28
-                renderedIconSize: 16
-                iconSource: root.iconPrefix + "info.svg"
-                toolTipText: qsTr("Properties")
-                onClicked: root.showPropertiesDialog()
-            }
-            AppIconButton {
-                objectName: "fullScreenHudCloseButton"
-                controlSize: 28
-                renderedIconSize: 16
-                iconSource: root.iconPrefix + "close.svg"
-                toolTipText: qsTr("Exit full screen")
-                shortcutText: "Esc"
-                onClicked: root.closeRequested()
-            }
-        }
-    }
-
-    Rectangle {
-        objectName: "fullScreenEdgePrevButton"
-        anchors.left: parent.left
-        anchors.leftMargin: 16
-        anchors.verticalCenter: parent.verticalCenter
-        width: 36
-        height: 48
-        radius: 8
-        z: 26
-        color: Qt.rgba(Theme.raisedSurface.r, Theme.raisedSurface.g, Theme.raisedSurface.b, 0.88)
-        border.color: Theme.opticalGray
-        visible: !root.panoramaActive && root.controller.canGoPrevious && opacity > 0
-        opacity: prevEdgeHover.hovered ? 0.96 : (root.hudVisible ? 0.55 : 0.0)
-        Behavior on opacity { NumberAnimation { duration: Theme.fast } }
-        HoverHandler { id: prevEdgeHover; blocking: false }
-        AppIconButton {
-            anchors.fill: parent
-            iconSource: root.iconPrefix + "back.svg"
-            toolTipText: qsTr("Previous image")
-            shortcutText: "←"
-            onClicked: root.controller.showPrevious()
-        }
-    }
-
-    Rectangle {
-        objectName: "fullScreenEdgeNextButton"
-        anchors.right: parent.right
-        anchors.rightMargin: 16
-        anchors.verticalCenter: parent.verticalCenter
-        width: 36
-        height: 48
-        radius: 8
-        z: 26
-        color: Qt.rgba(Theme.raisedSurface.r, Theme.raisedSurface.g, Theme.raisedSurface.b, 0.88)
-        border.color: Theme.opticalGray
-        visible: !root.panoramaActive && root.controller.canGoNext && opacity > 0
-        opacity: nextEdgeHover.hovered ? 0.96 : (root.hudVisible ? 0.55 : 0.0)
-        Behavior on opacity { NumberAnimation { duration: Theme.fast } }
-        HoverHandler { id: nextEdgeHover; blocking: false }
-        AppIconButton {
-            anchors.fill: parent
-            iconSource: root.iconPrefix + "forward.svg"
-            toolTipText: qsTr("Next image")
-            shortcutText: "→"
-            onClicked: root.controller.showNext()
         }
     }
 

@@ -63,8 +63,6 @@ Rectangle {
     property real captionButtonsWidth: 0
     readonly property rect titleBarLeftControls: toolbar.leftControlsBounds
     readonly property rect titleBarRightControls: toolbar.rightControlsBounds
-    readonly property var sortLabels: [qsTr("Name"), qsTr("Modified"),
-                                       qsTr("Size"), qsTr("Type")]
     signal fullScreenRequested(var paths, int initialIndex)
     signal settingsRequested()
     // Use visible, not opened: block input throughout popup enter/exit transitions.
@@ -89,10 +87,6 @@ Rectangle {
                                                     rawParametersPanelLoader.item.inputFocused) &&
                                                   root.contentInteractionEnabled
     ShortcutContext { id: shortcutContext; targetWindow: root.Window.window }
-    function pathIsRaw(path) {
-        const lowered = path.toLowerCase();
-        return lowered.endsWith(".raw") || lowered.endsWith(".yuv");
-    }
     function activePaneHeader(item) {
         const candidate = item || root
         if (candidate.visible && candidate.objectName === "paneHeader-" + root.workspaceController.activePaneIndex)
@@ -239,24 +233,9 @@ Rectangle {
             galleryWorkspace.resetPreview()
         }
     }
-    AppMenu {
+    SortMenu {
         id: sortMenu
-        AppMenuItem {
-            text: (root.controller.sortMode === 0 ? "✓  " : "    ") + qsTr("Name")
-            onTriggered: root.controller.setSortMode(0)
-        }
-        AppMenuItem {
-            text: (root.controller.sortMode === 1 ? "✓  " : "    ") + qsTr("Modified time")
-            onTriggered: root.controller.setSortMode(1)
-        }
-        AppMenuItem {
-            text: (root.controller.sortMode === 2 ? "✓  " : "    ") + qsTr("File size")
-            onTriggered: root.controller.setSortMode(2)
-        }
-        AppMenuItem {
-            text: (root.controller.sortMode === 3 ? "✓  " : "    ") + qsTr("File type")
-            onTriggered: root.controller.setSortMode(3)
-        }
+        controller: root.controller
     }
 
     ImageResizeDialog {
@@ -267,35 +246,6 @@ Rectangle {
     component WorkspaceBrowserPane: BrowserPane {
         id: pane
         onImageResizeRequested: imageResizeDialog.openForSelection(pane.controller)
-    }
-
-    Menu {
-        id: folderMenu
-        MenuItem {
-            text: qsTr("Open folder…")
-            onTriggered: root.controller.chooseDirectory()
-        }
-        MenuItem {
-            text: qsTr("Back")
-            enabled: root.controller.canGoBack
-            onTriggered: root.controller.navigateBack()
-        }
-        MenuItem {
-            text: qsTr("Forward")
-            enabled: root.controller.canGoForward
-            onTriggered: root.controller.navigateForward()
-        }
-        MenuItem {
-            text: qsTr("Parent folder")
-            enabled: root.controller.canGoUp
-            onTriggered: root.controller.navigateUp()
-        }
-        MenuSeparator {}
-        MenuItem {
-            text: qsTr("Add browser pane")
-            enabled: root.workspaceController.canAddPane === undefined || root.workspaceController.canAddPane
-            onTriggered: root.workspaceController.addFileManagerPane()
-        }
     }
 
     Rectangle {
@@ -810,6 +760,7 @@ Rectangle {
             if (visible) root.controller.setGalleryPath(path);
         }
         function resetPreview() {
+            itemContextMenu.close()
             currentPreviewPath = "";
             currentPreviewUrl = "";
             currentPreviewName = "";
@@ -824,18 +775,15 @@ Rectangle {
         function showImageMenu(x, y) {
             if (root.controller.selectionCount === 0)
                 return;
-            if (contextIsDirectory)
-                galleryFolderContextMenu.popup(x, y);
-            else if (root.pathIsRaw(contextPath))
-                galleryRawFileContextMenu.popup(x, y);
-            else
-                galleryFileContextMenu.popup(x, y);
+            itemContextMenu.popup(x, y)
         }
         visible: root.displayMode === 2 && root.workspaceController.paneCount === 1
         onVisibleChanged: {
             root.controller.setGalleryPath(visible ? currentPreviewPath : "")
             if (visible)
                 Qt.callLater(galleryStrip.syncSelectionToCurrent)
+            else
+                itemContextMenu.close()
         }
         anchors.left: gutter.right
         anchors.right: inspectorResizeHandle.left
@@ -1415,7 +1363,7 @@ Rectangle {
                             elide: Text.ElideMiddle
                             color: Theme.graphiteInk
                             font.family: Theme.uiFont
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.metadataFontSize
                         }
                         MouseArea {
                             id: galleryMouse
@@ -1458,9 +1406,7 @@ Rectangle {
                         DragHandler {
                             id: galleryDragHandler
                             enabled: root.contentInteractionEnabled &&
-                                     !galleryFileContextMenu.visible &&
-                                     !galleryRawFileContextMenu.visible &&
-                                     !galleryFolderContextMenu.visible &&
+                                     !itemContextMenu.visible &&
                                      !workspaceContextMenu.visible
                             acceptedButtons: Qt.LeftButton
                             target: null
@@ -1604,152 +1550,24 @@ Rectangle {
             onTriggered: newFolderDialog.open()
         }
         AppMenuSeparator {}
-        AppMenu {
-            title: qsTr("Sort by")
-            AppMenuItem {
-                objectName: "sortByNameAction"
-                text: (root.controller.sortMode === 0 ? "✓  " : "    ") + qsTr("Name")
-                onTriggered: root.controller.setSortMode(0)
-            }
-            AppMenuItem {
-                objectName: "sortByTypeAction"
-                text: (root.controller.sortMode === 3 ? "✓  " : "    ") + "Type"
-                onTriggered: root.controller.setSortMode(3)
-            }
-            AppMenuItem {
-                objectName: "sortBySizeAction"
-                text: (root.controller.sortMode === 2 ? "✓  " : "    ") + "Size"
-                onTriggered: root.controller.setSortMode(2)
-            }
-            AppMenuItem {
-                objectName: "sortByModifiedAction"
-                text: (root.controller.sortMode === 1 ? "✓  " : "    ") + qsTr("Date modified")
-                onTriggered: root.controller.setSortMode(1)
-            }
-        }
-    }
-
-    AppMenu {
-        id: galleryFileContextMenu
-        objectName: "galleryFileContextMenu"
-        AppMenuItem {
-            text: qsTr("Open full screen")
-            onTriggered: root.controller.activatePath(galleryWorkspace.contextPath)
-        }
-        AppMenuItem {
-            text: qsTr("Compare selected")
-            enabled: root.workspaceController.canCompare
-            onTriggered: root.workspaceController.compareSelected()
-        }
-        ImageOperationsMenu {
+        SortMenu {
             controller: root.controller
-            onResizeRequested: imageResizeDialog.openForSelection(root.controller)
-        }
-        AppMenuItem {
-            visible: root.controller.canRestoreSelected
-            text: qsTr("Restore original")
-            onTriggered: root.controller.restoreSelected()
-        }
-        AppMenuSeparator {}
-        AppMenuItem {
-            text: qsTr("Cut")
-            shortcutText: Qt.platform.os === "osx" ? "⌘X" : "Ctrl+X"
-            onTriggered: root.controller.copySelected(true)
-        }
-        AppMenuItem {
-            text: qsTr("Copy")
-            shortcutText: Qt.platform.os === "osx" ? "⌘C" : "Ctrl+C"
-            onTriggered: root.controller.copySelected(false)
-        }
-        AppMenuItem {
-            text: qsTr("Rename…")
-            enabled: root.controller.selectionCount === 1
-            onTriggered: root.controller.renameSelected()
-        }
-        AppMenuItem {
-            text: qsTr("Move to Trash")
-            destructive: true
-            onTriggered: root.controller.moveSelectedToTrash()
-        }
-        AppMenuSeparator {}
-        AppMenuItem {
-            text: (Qt.platform.os === "osx" ? qsTr("Reveal in Finder") : qsTr("Show in File Explorer"))
-            enabled: root.controller.selectionCount === 1
-            onTriggered: root.controller.revealSelected()
-        }
-        AppMenuItem {
-            text: qsTr("Properties")
-            enabled: root.controller.selectionCount === 1
-            onTriggered: root.controller.showSelectedProperties()
         }
     }
 
-    AppMenu {
-        id: galleryRawFileContextMenu
-        objectName: "galleryRawFileContextMenu"
-        AppMenuItem { text: qsTr("Open full screen"); onTriggered: root.controller.activatePath(galleryWorkspace.contextPath) }
-        AppMenuItem { text: qsTr("Compare selected"); enabled: root.workspaceController.canCompare; onTriggered: root.workspaceController.compareSelected() }
-        AppMenuItem { text: qsTr("RAW/YUV parameters…"); enabled: root.controller.canEditRaw; onTriggered: root.controller.editSelectedRawParameters() }
-        ImageOperationsMenu {
-            controller: root.controller
-            onResizeRequested: imageResizeDialog.openForSelection(root.controller)
-        }
-        AppMenuItem { visible: root.controller.canRestoreSelected; text: qsTr("Restore original"); onTriggered: root.controller.restoreSelected() }
-        AppMenuSeparator {}
-        AppMenuItem { text: qsTr("Cut"); shortcutText: Qt.platform.os === "osx" ? "⌘X" : "Ctrl+X"; onTriggered: root.controller.copySelected(true) }
-        AppMenuItem { text: qsTr("Copy"); shortcutText: Qt.platform.os === "osx" ? "⌘C" : "Ctrl+C"; onTriggered: root.controller.copySelected(false) }
-        AppMenuItem { text: qsTr("Rename…"); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.renameSelected() }
-        AppMenuItem { text: qsTr("Move to Trash"); destructive: true; onTriggered: root.controller.moveSelectedToTrash() }
-        AppMenuSeparator {}
-        AppMenuItem { text: (Qt.platform.os === "osx" ? qsTr("Reveal in Finder") : qsTr("Show in File Explorer")); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.revealSelected() }
-        AppMenuItem { text: qsTr("Properties"); enabled: root.controller.selectionCount === 1; onTriggered: root.controller.showSelectedProperties() }
-    }
-
-    // Separate folder/file menus avoid invisible menu rows reserving vertical space.
-    AppMenu {
-        id: galleryFolderContextMenu
-        objectName: "galleryFolderContextMenu"
-        AppMenuItem {
-            text: qsTr("Open folder")
-            onTriggered: root.controller.activatePath(galleryWorkspace.contextPath)
-        }
-        AppMenuItem {
-            text: qsTr("Paste into folder")
-            enabled: root.controller.canPaste
-            onTriggered: root.controller.pasteItemsInto(galleryWorkspace.contextPath)
-        }
-        AppMenuSeparator {}
-        AppMenuItem {
-            text: qsTr("Cut")
-            shortcutText: Qt.platform.os === "osx" ? "⌘X" : "Ctrl+X"
-            onTriggered: root.controller.copySelected(true)
-        }
-        AppMenuItem {
-            text: qsTr("Copy")
-            shortcutText: Qt.platform.os === "osx" ? "⌘C" : "Ctrl+C"
-            onTriggered: root.controller.copySelected(false)
-        }
-        AppMenuItem {
-            text: qsTr("Rename…")
-            enabled: root.controller.selectionCount === 1
-            onTriggered: root.controller.renameSelected()
-        }
-        AppMenuItem {
-            text: qsTr("Move to Trash")
-            destructive: true
-            onTriggered: root.controller.moveSelectedToTrash()
-        }
-        AppMenuSeparator {}
-        AppMenuItem {
-            text: (Qt.platform.os === "osx" ? qsTr("Reveal in Finder") : qsTr("Show in File Explorer"))
-            enabled: root.controller.selectionCount === 1
-            onTriggered: root.controller.revealSelected()
-        }
-        AppMenuItem {
-            text: qsTr("Properties")
-            enabled: root.controller.selectionCount === 1
-            onTriggered: root.controller.showSelectedProperties()
-        }
+    // Shared item context menu for the gallery view. Its flavor follows the item
+    // under the pointer: regular image, RAW/YUV file, or folder.
+    ItemContextMenu {
+        id: itemContextMenu
+        objectName: galleryWorkspace.contextIsDirectory ? "galleryFolderContextMenu"
+                 : itemContextMenu.isRawFile ? "galleryRawFileContextMenu"
+                 : "galleryFileContextMenu"
+        controller: root.controller
+        workspaceController: root.workspaceController
+        itemPath: galleryWorkspace.contextPath
+        isFolder: galleryWorkspace.contextIsDirectory
+        onOpenRequested: root.controller.activatePath(galleryWorkspace.contextPath)
+        onResizeRequested: imageResizeDialog.openForSelection(root.controller)
     }
 
     PlatformDialogs.FolderDialog {

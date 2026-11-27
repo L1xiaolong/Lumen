@@ -712,7 +712,8 @@ Item {
                 anchors.centerIn: parent
                 text: root.transientMessage
                 color: "white"
-                font.pixelSize: 10
+                font.family: Theme.uiFont
+                font.pixelSize: Theme.metadataFontSize
             }
         }
     }

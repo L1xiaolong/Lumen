@@ -235,6 +235,7 @@ class BrowseController final : public QObject {
     void failNetworkDirectory(bool timedOut);
     void rescanCurrentDirectory();
     void registerPendingDirectoryWatcher();
+    void rememberRecentImageFolder(const QVector<ImageFileRecord>& files);
     void persistViewportScrollPositions();
     void setStatusText(const QString& text);
     void requestGalleryFull();
@@ -267,9 +268,8 @@ class BrowseController final : public QObject {
     QStringList viewportOwners_;
     QTimer* refreshTimer_ = nullptr;
     QTimer* refreshDeadlineTimer_ = nullptr;
-    QTimer* recentCandidateTimer_ = nullptr;
     QString currentDirectory_;
-    QString recentCandidateDirectory_;
+    bool recentImageFolderPending_ = false;
     QStringList recentFolders_;
     QStringList recentLocations_;
     QVariantList nativeDrivePlaces_;

@@ -241,6 +241,7 @@ Rectangle {
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
         ColumnLayout {
+            id: navigationColumn
             width: navigationScroll.availableWidth
             spacing: 0
 
@@ -253,7 +254,7 @@ Rectangle {
 
             Rectangle {
                 Layout.fillWidth: true
-                visible: recentItems.length > 0
+                visible: navigationColumn.recentItems.length > 0
                 implicitHeight: visible ? 26 : 0
                 color: "transparent"
 
@@ -272,7 +273,7 @@ Rectangle {
             }
 
             Repeater {
-                model: recentItems
+                model: navigationColumn.recentItems
                 delegate: SidebarPlace {
                     required property var modelData
                     entry: modelData
@@ -281,7 +282,7 @@ Rectangle {
 
             Item {
                 Layout.fillWidth: true
-                visible: recentItems.length > 0
+                visible: navigationColumn.recentItems.length > 0
                 implicitHeight: visible ? 16 : 0
             }
 

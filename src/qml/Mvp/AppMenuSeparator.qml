@@ -2,7 +2,8 @@ import QtQuick
 import QtQuick.Controls
 
 MenuSeparator {
-    implicitHeight: 9
+    // Mirror AppMenuItem: an invisible row must collapse instead of reserving space.
+    implicitHeight: visible ? 9 : 0
     contentItem: Rectangle {
         x: 8
         y: 4
