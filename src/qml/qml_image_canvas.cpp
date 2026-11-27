@@ -1379,10 +1379,13 @@ void QmlImageCanvas::wheelEvent(QWheelEvent* event) {
 
 void QmlImageCanvas::mousePressEvent(QMouseEvent* event) {
     activeSlot_ = slotAt(event->position());
-    if (activeSlot_ >= 0)
-        emit slotActivated(activeSlot_);
+    int activatedSlot = activeSlot_;
+    if (presentationMode_ == 1 && frames_.size() >= 2 && event->position().x() > dividerPosition())
+        activatedSlot = 1;
     if (event->button() != Qt::LeftButton || activeSlot_ < 0 ||
         logicalImageSize(activeSlot_).isEmpty()) {
+        if (activatedSlot >= 0)
+            emit slotActivated(activatedSlot);
         event->ignore();
         return;
     }
@@ -1393,6 +1396,8 @@ void QmlImageCanvas::mousePressEvent(QMouseEvent* event) {
             dividerDragging_ = true;
     }
     if (!dividerDragging_) {
+        if (activatedSlot >= 0)
+            emit slotActivated(activatedSlot);
         dragging_ = true;
         lastMousePosition_ = event->position();
     }

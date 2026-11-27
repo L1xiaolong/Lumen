@@ -681,7 +681,7 @@ Rectangle {
     // a compact contact strip. It uses the same production thumbnail model.
     PaneHeader {
         id: galleryPaneHeader
-        searchReturnTarget: galleryFlick
+        searchReturnTarget: galleryStrip
         enabled: root.contentInteractionEnabled
         visible: galleryWorkspace.visible
         anchors.left: gutter.right
@@ -789,7 +789,11 @@ Rectangle {
                 galleryFileContextMenu.popup(x, y);
         }
         visible: root.displayMode === 2 && root.workspaceController.paneCount === 1
-        onVisibleChanged: root.controller.setGalleryPath(visible ? currentPreviewPath : "")
+        onVisibleChanged: {
+            root.controller.setGalleryPath(visible ? currentPreviewPath : "")
+            if (visible)
+                Qt.callLater(galleryStrip.syncSelectionToCurrent)
+        }
         anchors.left: gutter.right
         anchors.right: inspectorResizeHandle.left
         anchors.top: galleryPaneHeader.bottom
@@ -1051,6 +1055,8 @@ Rectangle {
                                 const point = mapToItem(root, mouse.x, mouse.y);
                                 galleryWorkspace.showImageMenu(point.x, point.y);
                             } else if (galleryWorkspace.currentPreviewPath.length > 0) {
+                                galleryStrip.keyboardNavigating = false;
+                                galleryStrip.forceActiveFocus(Qt.MouseFocusReason);
                                 root.controller.selectPath(galleryWorkspace.currentPreviewPath);
                             }
                         }
@@ -1132,6 +1138,63 @@ Rectangle {
                 boundsBehavior: Flickable.StopAtBounds
                 interactive: root.contentInteractionEnabled
                 reuseItems: true
+                keyNavigationEnabled: true
+                activeFocusOnTab: true
+                property bool keyboardNavigating: false
+                property bool keyboardKeepSelection: false
+                function syncSelectionToCurrent() {
+                    if (!galleryWorkspace.visible || !root.controller)
+                        return;
+                    const selected = root.controller.selectedPaths;
+                    if (selected && selected.length > 0) {
+                        const index = root.controller.thumbnailIndexForPath(selected[0]);
+                        if (index >= 0) {
+                            keyboardNavigating = false;
+                            currentIndex = index;
+                            positionViewAtIndex(index, GridView.Contain);
+                            if (currentItem) {
+                                galleryWorkspace.showPreview(currentItem.path,
+                                                             currentItem.thumbnailUrl,
+                                                             currentItem.fileName,
+                                                             currentItem.technicalLabel,
+                                                             currentItem.isDirectory);
+                            }
+                        }
+                    }
+                }
+                onActiveFocusChanged: if (!activeFocus) keyboardNavigating = false
+                onCurrentItemChanged: {
+                    if (keyboardNavigating && currentItem) {
+                        positionViewAtIndex(currentIndex, GridView.Contain);
+                        galleryWorkspace.showPreview(currentItem.path,
+                                                     currentItem.thumbnailUrl,
+                                                     currentItem.fileName,
+                                                     currentItem.technicalLabel,
+                                                     currentItem.isDirectory);
+                        if (!keyboardKeepSelection)
+                            root.controller.selectPath(currentItem.path, false, false);
+                    }
+                }
+                Keys.onPressed: function (event) {
+                    if ([Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Home, Qt.Key_End].indexOf(event.key) >= 0) {
+                        keyboardNavigating = true;
+                        keyboardKeepSelection = Boolean((event.modifiers & Qt.ControlModifier)
+                                                        || (event.modifiers & Qt.MetaModifier)
+                                                        || (event.modifiers & Qt.ShiftModifier));
+                        event.accepted = false;
+                    } else if ((event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && currentItem) {
+                        keyboardNavigating = true;
+                        galleryWorkspace.showPreview(currentItem.path,
+                                                     currentItem.thumbnailUrl,
+                                                     currentItem.fileName,
+                                                     currentItem.technicalLabel,
+                                                     currentItem.isDirectory);
+                        root.controller.selectPath(currentItem.path, false, event.key === Qt.Key_Space);
+                        if (event.key !== Qt.Key_Space)
+                            root.controller.activatePath(currentItem.path);
+                        event.accepted = true;
+                    }
+                }
                 onInteractiveChanged: {
                     if (!interactive)
                         cancelFlick()
@@ -1286,6 +1349,8 @@ Rectangle {
                                     root.controller.navigateForward();
                                     return;
                                 }
+                                galleryStrip.keyboardNavigating = false;
+                                galleryStrip.forceActiveFocus(Qt.MouseFocusReason);
                                 galleryStrip.currentIndex = galleryDelegate.index;
                                 galleryWorkspace.showPreview(galleryDelegate.path,
                                                              galleryDelegate.thumbnailUrl,
@@ -1934,6 +1999,7 @@ Rectangle {
     Shortcut {
         sequence: "Return"
         enabled: root.fileShortcutsEnabled && root.controller.selectionCount === 1
+                 && !(galleryStrip.visible && galleryStrip.activeFocus)
         onActivated: root.controller.activatePath(root.controller.selectedPaths[0])
     }
     Shortcut {

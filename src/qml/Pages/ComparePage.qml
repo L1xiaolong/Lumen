@@ -431,6 +431,8 @@ Item {
             function onPixelHovered(sourceSlot, pixel, valueText, valid) {
                 if (valid)
                     root.pixelValues = root.controller.pixelTexts(sourceSlot, pixel.x, pixel.y)
+                else
+                    root.initializePixelPlaceholders()
             }
             function onSlotActivated(slot) { root.selectedSlot = slot }
         }
@@ -555,7 +557,7 @@ Item {
                         objectName: "compareFileInformation_" + comparisonCell.index
                         anchors.left: parent.left
                         anchors.right: parent.right
-                        text: root.comparisonFileText(comparisonCell.index,
+                        text: root.comparisonFileText(comparisonCell.displayedSlot,
                                                       comparisonCell.navigationData)
                         elide: Text.ElideRight
                     }
@@ -571,7 +573,7 @@ Item {
                         objectName: "compareExifInformation_" + comparisonCell.index
                         anchors.left: parent.left
                         anchors.right: parent.right
-                        text: root.comparisonExifText(comparisonCell.index)
+                        text: root.comparisonExifText(comparisonCell.displayedSlot)
                         elide: Text.ElideRight
                     }
                 }
@@ -597,7 +599,7 @@ Item {
 
             Item {
                 visible: root.controller.pixelValueVisible
-                         && root.pixelValues[comparisonCell.index]
+                         && root.pixelValues[comparisonCell.displayedSlot]
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.margins: 8
@@ -609,7 +611,7 @@ Item {
                     objectName: "comparePixelValue_" + comparisonCell.index
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    text: root.pixelValues[comparisonCell.index] || ""
+                    text: root.pixelValues[comparisonCell.displayedSlot] || ""
                     elide: Text.ElideRight
                 }
             }

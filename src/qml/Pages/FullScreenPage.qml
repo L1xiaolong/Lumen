@@ -342,9 +342,9 @@ Item {
         width: Math.min(460, parent.width - 32)
         height: Math.max(42, messageText.contentHeight + 20)
         radius: 6
-        color: "#DCEEF1F1"
+        color: Theme.raisedSurface
         border.width: 1
-        border.color: "#BCC5C8"
+        border.color: root.imageError.length > 0 ? Theme.dangerBorder : Theme.opticalGray
         Text {
             id: messageText
             anchors.centerIn: parent
