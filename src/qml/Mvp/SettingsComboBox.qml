@@ -31,7 +31,9 @@ ComboBox {
         radius: Theme.radius
         color: root.down ? Theme.pressedSurface : root.hovered ? Theme.softHover : Theme.raisedSurface
         border.width: root.visualFocus ? 2 : 1
-        border.color: root.visualFocus ? Theme.probeBlue : root.hovered ? Theme.searchFieldHoverBorder : Theme.opticalGray
+        border.color: root.visualFocus ? Theme.probeBlue : root.hovered ? Theme.searchFieldHoverBorder : Theme.borderStrong
+        Behavior on color { ColorAnimation { duration: Theme.motionFast } }
+        Behavior on border.color { ColorAnimation { duration: Theme.motionFast } }
     }
     delegate: ItemDelegate {
         id: option
@@ -63,9 +65,10 @@ ComboBox {
             ScrollBar.vertical: ScrollBar { }
         }
         background: Rectangle {
-            radius: Theme.radius
+            radius: 6
             color: Theme.raisedSurface
-            border.color: Theme.opticalGray
+            border.color: Theme.borderStrong
+            ElevationShadow { radius: 6; spread: 1 }
         }
     }
 }

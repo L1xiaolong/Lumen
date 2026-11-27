@@ -16,12 +16,23 @@ Popup {
     focus: true
     closePolicy: Popup.CloseOnEscape
     Overlay.modal: Rectangle { color: Theme.overlay }
-    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.normal } }
-    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.normal } }
+    enter: Transition {
+        ParallelAnimation {
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.motionNormal; easing.type: Easing.OutCubic }
+            NumberAnimation { property: "scale"; from: 0.97; to: 1.0; duration: Theme.motionNormal; easing.type: Easing.OutCubic }
+        }
+    }
+    exit: Transition {
+        ParallelAnimation {
+            NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.motionFast; easing.type: Easing.InCubic }
+            NumberAnimation { property: "scale"; from: 1.0; to: 0.97; duration: Theme.motionFast; easing.type: Easing.InCubic }
+        }
+    }
     background: Rectangle {
         color: Theme.sensorWhite
-        radius: 8
-        border.color: Theme.opticalGray
+        radius: 10
+        border.color: Theme.borderStrong
+        ElevationShadow { radius: 10; spread: 3 }
     }
 
     property int currentSection: 0
@@ -190,7 +201,7 @@ Popup {
         radius: 7
         color: Theme.paperWhite
         Rectangle { anchors.right: parent.right; width: 8; height: parent.height; color: parent.color }
-        Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.opticalGray }
+        Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.borderSubtle }
         Text {
             x: 20; y: 22
             text: qsTr("Settings")
@@ -300,7 +311,7 @@ Popup {
             }
             BodyText { text: root.sections[root.currentSection].description }
         }
-        Rectangle { x: 24; width: parent.width - 48; anchors.bottom: parent.bottom; height: 1; color: Theme.opticalGray }
+        Rectangle { x: 24; width: parent.width - 48; anchors.bottom: parent.bottom; height: 1; color: Theme.borderSubtle }
     }
     Flickable {
         id: pageFlickable
@@ -336,8 +347,8 @@ Popup {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 1
         height: 56
-        color: Theme.paperWhite
-        Rectangle { width: parent.width; height: 1; color: Theme.opticalGray }
+        color: Theme.sensorWhite
+        Rectangle { width: parent.width; height: 1; color: Theme.borderSubtle }
         SettingsButton {
             objectName: "settingsRestoreButton"
             x: 24

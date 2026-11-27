@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QMouseEvent>
 #include <QRectF>
 #include <QVariant>
 #include <QtMath>
@@ -57,7 +58,9 @@ qreal WindowChromeController::captionButtonsWidth() const {
 }
 
 void WindowChromeController::attach(QWindow* window) {
+    if (window_) window_->removeEventFilter(this);
     window_ = window;
+    window_->installEventFilter(this);
     nativeHandle_ = static_cast<quintptr>(window->winId());
 #ifdef Q_OS_WIN
     if (supported()) {
@@ -70,6 +73,15 @@ void WindowChromeController::attach(QWindow* window) {
     connect(window, &QWindow::screenChanged, this, &WindowChromeController::metricsChanged);
     setSuspended(false);
     emit metricsChanged();
+}
+
+bool WindowChromeController::eventFilter(QObject* watched, QEvent* event) {
+    // Observe the press before Qt Quick delivers it to the clicked control.
+    if (watched == window_ && (event->type() == QEvent::MouseButtonPress ||
+                               event->type() == QEvent::NonClientAreaMouseButtonPress)) {
+        emit mousePressed(static_cast<QMouseEvent*>(event)->position());
+    }
+    return false;
 }
 
 void WindowChromeController::setSuspended(bool suspended) {
@@ -178,6 +190,12 @@ bool WindowChromeController::nativeEventFilter(const QByteArray&, void* message,
         setCaptionState(-1, pressedButton_);
         *result = 0;
         return true;
+    }
+    if (!fullscreen && (msg->message == WM_NCLBUTTONDOWN || msg->message == WM_NCRBUTTONDOWN ||
+                        msg->message == WM_NCMBUTTONDOWN)) {
+        const auto point = screenPoint();
+        const qreal scale = window_->devicePixelRatio();
+        emit mousePressed(QPointF(point.x / scale, point.y / scale));
     }
     if (msg->message == WM_NCLBUTTONDOWN && !fullscreen) {
         const int button = captionAt(screenPoint());

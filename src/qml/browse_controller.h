@@ -136,6 +136,7 @@ class BrowseController final : public QObject {
     Q_INVOKABLE void removeRecentDirectory(const QString& path);
     Q_INVOKABLE void openDirectoryUrl(const QUrl& url);
     Q_INVOKABLE void loadFolderTreeChildren(const QString& path);
+    Q_INVOKABLE QVariantList childFolders(const QString& path) const;
     Q_INVOKABLE bool isNetworkPath(const QString& path) const;
     Q_INVOKABLE QModelIndex folderTreeIndex(const QString& path, const QString& branchPath = {}) const;
     Q_INVOKABLE QAbstractItemModel* folderTreeBranch(const QString& path);

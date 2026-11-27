@@ -101,6 +101,16 @@ Rectangle {
         const focused = root.Window.window ? root.Window.window.activeFocusItem : null
         return focused && String(focused.objectName).indexOf("paneSearchField-") === 0
     }
+    Connections {
+        target: typeof windowChrome !== "undefined" ? windowChrome : null
+        enabled: root.visible && root.enabled
+        function onMousePressed(position) {
+            const editor = root.Window.window ? root.Window.window.activeFocusItem : null
+            if (editor && typeof editor.cancelLocationEdit === "function" &&
+                    !editor.contains(editor.mapFromItem(null, position)))
+                editor.cancelLocationEdit()
+        }
+    }
     function paneController(index) {
         const availablePanes = root.workspaceController.panes
         return availablePanes && index >= 0 && index < availablePanes.length
@@ -1644,6 +1654,13 @@ Rectangle {
         anchors.top: toolbar.bottom
         anchors.bottom: statusRail.top
         width: root.effectiveInspectorWidth
+        opacity: root.inspectorVisible ? 1 : 0
+        clip: true
+        Behavior on width {
+            enabled: !inspectorResizeMouse.pressed
+            NumberAnimation { duration: Theme.motionNormal; easing.type: Easing.OutCubic }
+        }
+        Behavior on opacity { NumberAnimation { duration: Theme.motionFast } }
         // Both inspectors are created on first use and stay alive afterwards. Their histogram,
         // EXIF and parameter editors are pure startup cost for the common launch that opens no
         // inspector, so nothing instantiates them until showProperties()/showRawParameters().
@@ -1692,7 +1709,8 @@ Rectangle {
         anchors.top: toolbar.bottom
         anchors.bottom: statusRail.top
         width: root.inspectorVisible ? 1 : 0
-        color: inspectorResizeMouse.containsMouse || inspectorResizeMouse.pressed ? Theme.probeBlue : Theme.opticalGray
+        color: inspectorResizeMouse.containsMouse || inspectorResizeMouse.pressed ? Theme.probeBlue : Theme.borderSubtle
+        Behavior on color { ColorAnimation { duration: Theme.motionFast } }
         z: 25
         MouseArea {
             id: inspectorResizeMouse

@@ -58,6 +58,7 @@ qt_add_qml_module(LumenQml
         Mvp/AppMenu.qml
         Mvp/AppMenuItem.qml
         Mvp/AppMenuSeparator.qml
+        Mvp/ElevationShadow.qml
         Mvp/ItemContextMenu.qml
         Mvp/SortMenu.qml
         Mvp/BrowserPane.qml

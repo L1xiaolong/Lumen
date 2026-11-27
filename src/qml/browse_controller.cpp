@@ -588,6 +588,26 @@ void BrowseController::openDirectoryUrl(const QUrl& url) {
     if (url.isLocalFile()) openDirectoryInternal(url.toLocalFile(), true);
 }
 
+QVariantList BrowseController::childFolders(const QString& path) const {
+    QVariantList folders;
+    if (path.trimmed().isEmpty()) return folders;
+    const QDir dir(path);
+    if (!dir.exists()) return folders;
+    const QFileInfoList entries = dir.entryInfoList(
+        QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable,
+        QDir::Name | QDir::IgnoreCase);
+    const int limit = qMin(entries.size(), qsizetype(200));
+    folders.reserve(limit);
+    for (int i = 0; i < limit; ++i) {
+        const QFileInfo& info = entries.at(i);
+        folders.append(QVariantMap{
+            {QStringLiteral("name"), info.fileName()},
+            {QStringLiteral("path"), QDir::cleanPath(info.absoluteFilePath())}
+        });
+    }
+    return folders;
+}
+
 QVariantList BrowseController::nativeSidebarPlaces() const {
     QVariantList places;
     QSet<QString> seenPaths;

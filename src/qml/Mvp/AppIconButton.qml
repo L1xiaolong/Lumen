@@ -12,6 +12,7 @@ Button {
     property string toolTipText: text
     property string shortcutText: ""
     property bool compact: text.length === 0
+    property bool suppressCheckedBackground: false
     property int controlSize: Theme.touchTarget
     property int renderedIconSize: Theme.iconSize
 
@@ -19,10 +20,13 @@ Button {
     implicitHeight: controlSize
     padding: 0
     opacity: enabled ? 1 : Theme.disabledOpacity
+    scale: control.down ? 0.93 : 1.0
+    Behavior on scale { NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
 
     background: Rectangle {
-        color: control.checked ? (control.down || control.hovered ? Theme.accentHoverSurface : Theme.accentSurface)
-                               : control.down ? Theme.pressedSurface : control.hovered ? Theme.softHover : "transparent"
+        color: (control.checked && !control.suppressCheckedBackground)
+               ? (control.down || control.hovered ? Theme.accentHoverSurface : Theme.accentSurface)
+               : control.down ? Theme.pressedSurface : control.hovered ? Theme.softHover : "transparent"
         radius: 6
         border.width: control.visualFocus ? 1 : 0
         border.color: Theme.probeBlue

@@ -26,5 +26,6 @@ TextField {
         border.width: root.activeFocus ? 2 : 1
         border.color: root.activeFocus ? Theme.searchFieldFocusBorder
                     : root.hovered ? Theme.searchFieldHoverBorder : Theme.searchFieldBorder
+        Behavior on border.color { ColorAnimation { duration: Theme.motionFast } }
     }
 }

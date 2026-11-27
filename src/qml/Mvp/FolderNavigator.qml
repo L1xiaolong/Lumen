@@ -9,9 +9,13 @@ Rectangle {
     id: root
     required property var controller
     property var workspaceController: null
+    readonly property var favoritesModel: workspaceController ? workspaceController.favoriteFolderModel : null
     property bool browsingEnabled: true
     property string contextPath: ""
     property bool contextIsRecent: false
+    readonly property bool contextIsFavorite: !!workspaceController &&
+        !!workspaceController.favoriteFolders && workspaceController.favoriteFolders.length > 0 &&
+        workspaceController.isFavoriteFolder(contextPath)
     property string iconPrefix: Theme.iconPrefix
     property string platformName: Qt.platform.os
 
@@ -34,6 +38,11 @@ Rectangle {
         const parts = String(path).split(/[\\/]/)
         return parts.length > 0 && parts[parts.length - 1].length > 0
                 ? parts[parts.length - 1] : path
+    }
+
+    function favoriteEntry(path) {
+        return { label: root.pathLabel(path), path: path, kind: "favorite",
+                 remote: root.controller.isNetworkPath(path) }
     }
 
     function folderIcon(expanded) {
@@ -86,6 +95,9 @@ Rectangle {
     }
 
     property var expandedDrives: ({})
+    property bool recentExpanded: true
+    property bool quickAccessExpanded: true
+    property bool locationsExpanded: macStyle || platformName === "windows"
 
     ListModel {
         id: drivePlaces
@@ -151,6 +163,8 @@ Rectangle {
 
     signal activePathChanged()
     function revealActivePath() {
+        if (macStyle && controller.currentDirectory.length > 0)
+            locationsExpanded = true
         const state = ({})
         const places = root.controller.nativeDrivePlaces || []
         for (const place of places)
@@ -165,14 +179,18 @@ Rectangle {
     }
 
     component SidebarPlace: Rectangle {
+        id: place
         required property var entry
+        property int iconX: entry.kind === "drive" ? 32 : 16
 
         Layout.fillWidth: true
         implicitHeight: root.itemHeight
         color: "transparent"
-        readonly property bool selected: root.samePath(entry.path, root.controller.currentDirectory)
+        readonly property bool isCurrentDir: root.samePath(entry.path, root.controller.currentDirectory)
+        readonly property bool selected: entry.kind !== "recent" && entry.kind !== "favorite" && isCurrentDir
 
-        ToolTip.visible: entry.kind === "recent" && sidebarPlaceMouse.containsMouse
+        ToolTip.visible: (entry.kind === "recent" || entry.kind === "favorite") &&
+                         sidebarPlaceMouse.containsMouse
         ToolTip.delay: 500
         ToolTip.text: String(entry.path)
 
@@ -188,18 +206,18 @@ Rectangle {
         }
 
         Image {
-            x: parent.entry.kind === "drive" ? 32 : 16
+            x: place.iconX
             anchors.verticalCenter: parent.verticalCenter
             width: root.iconSize_
             height: root.iconSize_
             source: root.placeIcon(parent.entry)
             sourceSize: Qt.size(32, 32)
-            opacity: 0.72
+            opacity: parent.selected ? 0.95 : 0.72
         }
 
         Text {
             objectName: "sidebarPlaceLabel-" + parent.entry.path
-            x: parent.entry.kind === "drive" ? 56 : 40
+            x: place.iconX + 24
             width: Math.max(0, parent.width - x - 12)
             anchors.verticalCenter: parent.verticalCenter
             text: parent.entry.label
@@ -207,7 +225,7 @@ Rectangle {
             color: parent.selected ? Theme.accent : root.sidebarText
             font.family: root.nativeFont
             font.pixelSize: 13
-            font.weight: parent.selected ? Theme.emphasisFontWeight : Theme.bodyFontWeight
+            font.weight: parent.isCurrentDir ? Theme.emphasisFontWeight : Theme.bodyFontWeight
         }
 
         MouseArea {
@@ -265,15 +283,33 @@ Rectangle {
                     anchors.leftMargin: 16
                     anchors.verticalCenter: parent.verticalCenter
                     text: qsTr("Recent")
-                    color: Theme.mutedInk
+                    color: recentHeaderMouse.containsMouse ? Theme.graphiteInk : Theme.mutedInk
                     font.family: root.nativeFont
                     font.pixelSize: 11
-                    font.weight: Theme.bodyFontWeight
+                    font.weight: Theme.emphasisFontWeight
+                }
+                Image {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 11
+                    height: 11
+                    source: root.iconPrefix + "chevron-down.svg"
+                    rotation: root.recentExpanded ? 0 : -90
+                    opacity: recentHeaderMouse.containsMouse ? 0.8 : 0.4
+                    Behavior on rotation { NumberAnimation { duration: Theme.motionFast; easing.type: Easing.OutCubic } }
+                }
+                MouseArea {
+                    id: recentHeaderMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.recentExpanded = !root.recentExpanded
                 }
             }
 
             Repeater {
-                model: navigationColumn.recentItems
+                model: root.recentExpanded ? navigationColumn.recentItems : []
                 delegate: SidebarPlace {
                     required property var modelData
                     entry: modelData
@@ -283,7 +319,7 @@ Rectangle {
             Item {
                 Layout.fillWidth: true
                 visible: navigationColumn.recentItems.length > 0
-                implicitHeight: visible ? 16 : 0
+                implicitHeight: visible ? (root.recentExpanded ? 14 : 6) : 0
             }
 
             Rectangle {
@@ -298,15 +334,33 @@ Rectangle {
                     anchors.leftMargin: 16
                     anchors.verticalCenter: parent.verticalCenter
                     text: qsTr("Quick Access")
-                    color: Theme.mutedInk
+                    color: quickHeaderMouse.containsMouse ? Theme.graphiteInk : Theme.mutedInk
                     font.family: root.nativeFont
                     font.pixelSize: 11
-                    font.weight: Theme.bodyFontWeight
+                    font.weight: Theme.emphasisFontWeight
+                }
+                Image {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 11
+                    height: 11
+                    source: root.iconPrefix + "chevron-down.svg"
+                    rotation: root.quickAccessExpanded ? 0 : -90
+                    opacity: quickHeaderMouse.containsMouse ? 0.8 : 0.4
+                    Behavior on rotation { NumberAnimation { duration: Theme.motionFast; easing.type: Easing.OutCubic } }
+                }
+                MouseArea {
+                    id: quickHeaderMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.quickAccessExpanded = !root.quickAccessExpanded
                 }
             }
 
             Repeater {
-                model: root.browsingEnabled ? root.quickAccessEntries() : []
+                model: (root.browsingEnabled && root.quickAccessExpanded) ? root.quickAccessEntries() : []
                 delegate: SidebarPlace {
                     required property var modelData
                     entry: modelData
@@ -315,7 +369,150 @@ Rectangle {
 
             Item {
                 Layout.fillWidth: true
-                implicitHeight: 16
+                implicitHeight: root.quickAccessExpanded ? 14 : 6
+            }
+
+            AbstractButton {
+                id: favoritesHeader
+                objectName: "favoritesHeading"
+                Layout.fillWidth: true
+                implicitHeight: 26
+                visible: !!root.favoritesModel
+                checkable: true
+                checked: true
+                hoverEnabled: true
+                focusPolicy: Qt.StrongFocus
+                text: qsTr("Favorites")
+                Accessible.name: text
+                background: Rectangle {
+                    color: favoritesHeader.visualFocus ? root.hoverBg : "transparent"
+                    radius: 5
+                }
+                contentItem: Item {
+                    Text {
+                        x: 16
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: favoritesHeader.text
+                        color: favoritesHeader.hovered ? Theme.graphiteInk : Theme.mutedInk
+                        font.family: root.nativeFont
+                        font.pixelSize: Theme.metadataFontSize
+                        font.weight: Theme.emphasisFontWeight
+                    }
+                    Image {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 11
+                        height: 11
+                        source: root.iconPrefix + "chevron-down.svg"
+                        rotation: favoritesHeader.checked ? 0 : -90
+                        opacity: favoritesHeader.hovered ? 0.8 : 0.4
+                        Behavior on rotation { NumberAnimation { duration: Theme.motionFast; easing.type: Easing.OutCubic } }
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 12
+                Layout.bottomMargin: 5
+                visible: favoritesHeader.visible && favoritesHeader.checked && favoriteRoots.count === 0
+                text: qsTr("Right-click a folder to pin it here.")
+                color: Theme.mutedInk
+                font.family: root.nativeFont
+                font.pixelSize: Theme.metadataFontSize
+                wrapMode: Text.Wrap
+            }
+
+            Repeater {
+                id: favoriteRoots
+                model: root.favoritesModel
+                delegate: ColumnLayout {
+                    id: favoriteBranch
+                    required property string display
+                    readonly property string path: display
+                    objectName: "favoriteBranch-" + path
+                    property var childrenPaths: []
+                    property bool loading: false
+                    property bool available: true
+                    Layout.fillWidth: true
+                    spacing: 0
+                    visible: favoritesHeader.checked
+
+                    Connections {
+                        target: root.workspaceController
+                        function onFavoriteChildrenLoaded(path, children, available) {
+                            if (path !== favoriteBranch.path || !favoriteDisclosure.checked)
+                                return
+                            favoriteBranch.childrenPaths = children
+                            favoriteBranch.available = available
+                            favoriteBranch.loading = false
+                        }
+                    }
+
+                    SidebarPlace {
+                        entry: root.favoriteEntry(favoriteBranch.path)
+                        iconX: 32
+                        AppIconButton {
+                            id: favoriteDisclosure
+                            objectName: "favoriteDisclosure-" + favoriteBranch.path
+                            x: 6
+                            anchors.verticalCenter: parent.verticalCenter
+                            controlSize: 24
+                            checkable: true
+                            suppressCheckedBackground: true
+                            focusPolicy: Qt.StrongFocus
+                            toolTipText: checked ? qsTr("Collapse subfolders") : qsTr("Expand subfolders")
+                            onToggled: {
+                                if (!checked)
+                                    return
+                                favoriteBranch.loading = true
+                                favoriteBranch.childrenPaths = []
+                                root.workspaceController.loadFavoriteChildren(favoriteBranch.path)
+                            }
+                            contentItem: Item {
+                                Image {
+                                    anchors.centerIn: parent
+                                    width: 12
+                                    height: 12
+                                    source: root.iconPrefix + "chevron-down.svg"
+                                    rotation: favoriteDisclosure.checked ? 0 : -90
+                                    opacity: 0.65
+                                    Behavior on rotation { NumberAnimation { duration: Theme.motionFast; easing.type: Easing.OutCubic } }
+                                }
+                            }
+                        }
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 48
+                        Layout.rightMargin: 12
+                        Layout.topMargin: 3
+                        Layout.bottomMargin: 4
+                        visible: favoriteDisclosure.checked && favoriteBranch.childrenPaths.length === 0
+                        text: favoriteBranch.loading ? qsTr("Loading subfolders…")
+                            : favoriteBranch.available ? qsTr("No subfolders") : qsTr("Folder unavailable")
+                        color: Theme.mutedInk
+                        font.family: root.nativeFont
+                        font.pixelSize: Theme.metadataFontSize
+                        wrapMode: Text.Wrap
+                    }
+                    Repeater {
+                        model: favoriteDisclosure.checked ? favoriteBranch.childrenPaths : []
+                        delegate: SidebarPlace {
+                            required property string modelData
+                            objectName: "favoriteChild-" + modelData
+                            entry: root.favoriteEntry(modelData)
+                            iconX: 48
+                        }
+                    }
+                }
+            }
+
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: favoritesHeader.visible ? 8 : 0
             }
 
             Rectangle {
@@ -330,15 +527,33 @@ Rectangle {
                     anchors.leftMargin: 16
                     anchors.verticalCenter: parent.verticalCenter
                     text: qsTr("Locations")
-                    color: Theme.mutedInk
+                    color: locationsHeaderMouse.containsMouse ? Theme.graphiteInk : Theme.mutedInk
                     font.family: root.nativeFont
                     font.pixelSize: 11
-                    font.weight: Theme.bodyFontWeight
+                    font.weight: Theme.emphasisFontWeight
+                }
+                Image {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 11
+                    height: 11
+                    source: root.iconPrefix + "chevron-down.svg"
+                    rotation: root.locationsExpanded ? 0 : -90
+                    opacity: locationsHeaderMouse.containsMouse ? 0.8 : 0.4
+                    Behavior on rotation { NumberAnimation { duration: Theme.motionFast; easing.type: Easing.OutCubic } }
+                }
+                MouseArea {
+                    id: locationsHeaderMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.locationsExpanded = !root.locationsExpanded
                 }
             }
 
             Repeater {
-                model: drivePlaces
+                model: root.locationsExpanded ? drivePlaces : []
                 delegate: ColumnLayout {
                     id: driveBranch
                     required property var place
@@ -399,7 +614,7 @@ Rectangle {
             }
 
             NavigationTree {
-                visible: root.platformName !== "windows"
+                visible: root.platformName !== "windows" && root.locationsExpanded
                 // Effective visibility also follows the browse page during full-screen viewing.
                 // Keep the model attached while hidden so TreeView retains expanded folders.
                 model: root.platformName !== "windows" ? root.controller.folderTree : null
@@ -526,6 +741,18 @@ Rectangle {
                          ? root.hoverBg : "transparent"
             }
 
+            Repeater {
+                model: Math.max(0, treeDelegate.depth + (folderTree.drivePath.length > 0 ? 1 : 0))
+                delegate: Rectangle {
+                    required property int index
+                    x: index * root.indentWidth + 14
+                    y: 0
+                    width: 1
+                    height: treeDelegate.height
+                    color: Theme.borderSubtle
+                }
+            }
+
             Image {
                 x: (treeDelegate.depth + (folderTree.drivePath.length > 0 ? 1 : 0)) * root.indentWidth + 8
                 anchors.verticalCenter: parent.verticalCenter
@@ -535,6 +762,7 @@ Rectangle {
                 visible: treeDelegate.isDirectory
                 rotation: treeDelegate.expanded ? 0 : -90
                 opacity: 0.65
+                Behavior on rotation { NumberAnimation { duration: Theme.motionFast; easing.type: Easing.OutCubic } }
             }
 
             Image {
@@ -623,6 +851,12 @@ Rectangle {
                 if (pane)
                     pane.openDirectory(root.contextPath)
             }
+        }
+        AppMenuItem {
+            objectName: "sidebarPinFolderAction"
+            visible: !!root.favoritesModel
+            text: root.contextIsFavorite ? qsTr("Unpin from Favorites") : qsTr("Pin to Favorites")
+            onTriggered: root.workspaceController.setFolderFavorite(root.contextPath, !root.contextIsFavorite)
         }
         AppMenuSeparator {
             visible: root.samePath(root.contextPath, root.controller.currentDirectory)

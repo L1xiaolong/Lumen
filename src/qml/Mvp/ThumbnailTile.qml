@@ -81,8 +81,9 @@ Item {
                 ? imageDimensions.width + "×" + imageDimensions.height
                 : qsTr("Reading size…")
         readonly property string depthText: sourceBitDepth > 0
-                                                ? sourceBitDepth + " bit"
+                                                ? sourceBitDepth + "b"
                                                 : qsTr("Reading…")
+        readonly property bool truncated: technicalText.truncated
 
         height: 18
 
@@ -149,6 +150,7 @@ Item {
         technicalLabel: root.technicalLabel
         directory: root.directory
         visible: tileMouse.containsMouse && !tileDragHandler.active && root.path.length > 0
+                 && (root.displayMode === 2 || (visualLoader.item !== null && visualLoader.item.textTruncated))
     }
 
     Loader {
@@ -165,12 +167,13 @@ Item {
         id: gridVisual
         Item {
             readonly property bool thumbnailReady: gridPreview.status === Image.Ready
+            readonly property bool textTruncated: gridName.truncated || gridMetaStrip.truncated
             Rectangle {
                 anchors.fill: parent
                 color: root.selected ? Theme.fileSelectionSurface : tileMouse.containsMouse ? Theme.paperWhite : "transparent"
-                radius: Theme.radius
+                radius: 6
                 border.width: 1
-                border.color: root.selected ? Theme.fileSelectionBorder : "transparent"
+                border.color: root.selected ? Theme.fileSelectionBorder : tileMouse.containsMouse ? Theme.borderSubtle : "transparent"
             }
             Rectangle {
                 id: imageWell
@@ -181,8 +184,9 @@ Item {
                 anchors.rightMargin: 8
                 anchors.topMargin: 6
                 height: Math.round(width * 0.75)
+                radius: 4
                 color: Theme.thumbnailWell
-                border.color: Theme.opticalGray
+                border.color: Theme.borderSubtle
                 border.width: 0
                 clip: true
                 Image {
@@ -194,6 +198,8 @@ Item {
                     // which appears as periodic flashing during a long scroll.
                     source: root.requestThumbnail && !root.directory ? root.thumbnailUrl : ""
                     visible: !root.directory
+                    opacity: status === Image.Ready ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: Theme.motionNormal; easing.type: Easing.OutCubic } }
                     asynchronous: true
                     cache: true
                     sourceSize: Qt.size(384, 384)
@@ -240,6 +246,7 @@ Item {
                 font.weight: Theme.bodyFontWeight
             }
             MetadataStrip {
+                id: gridMetaStrip
                 visible: root.displayMode !== 2
                 anchors.left: gridName.left
                 anchors.right: gridName.right
@@ -260,12 +267,13 @@ Item {
         id: listVisual
         Item {
             readonly property bool thumbnailReady: listPreview.status === Image.Ready
+            readonly property bool textTruncated: false
             Rectangle {
                 anchors.fill: parent
                 color: root.selected ? Theme.fileSelectionSurface : tileMouse.containsMouse ? Theme.paperWhite : "transparent"
-                radius: Theme.radius
+                radius: 6
                 border.width: 1
-                border.color: root.selected ? Theme.fileSelectionBorder : "transparent"
+                border.color: root.selected ? Theme.fileSelectionBorder : tileMouse.containsMouse ? Theme.borderSubtle : "transparent"
             }
             Rectangle {
                 id: listImageWell
@@ -274,8 +282,9 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 width: 72
                 height: 52
+                radius: 4
                 color: Theme.thumbnailWell
-                border.color: Theme.opticalGray
+                border.color: Theme.borderSubtle
                 border.width: 0
                 clip: true
                 Image {
@@ -284,6 +293,8 @@ Item {
                     anchors.fill: parent
                     source: root.requestThumbnail && !root.directory ? root.thumbnailUrl : ""
                     visible: !root.directory
+                    opacity: status === Image.Ready ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: Theme.motionNormal; easing.type: Easing.OutCubic } }
                     asynchronous: true
                     cache: true
                     sourceSize: Qt.size(256, 256)

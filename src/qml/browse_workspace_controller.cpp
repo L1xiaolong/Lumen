@@ -4,19 +4,34 @@
 #include "qml/browse_controller.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 #include <QFileSystemModel>
-#include <QSet>
+#include <QPointer>
+#include <QSettings>
 
 #include <algorithm>
+#include <thread>
 #include <utility>
 
 namespace mvpview {
+namespace {
+
+const auto favoriteFoldersKey = QStringLiteral("browser/favoriteFolders");
+
+QString favoriteFolderPath(const QString& path) {
+    if (!QDir::isAbsolutePath(path)) return {};
+    return QDir::cleanPath(QDir::fromNativeSeparators(path));
+}
+
+} // namespace
 
 BrowseWorkspaceController::BrowseWorkspaceController(
     std::shared_ptr<const IImageDecoder> decoder, const QString& initialDirectory,
     bool deferInitialDirectory, QObject* parent)
     : QObject(parent), loader_(new ImageLoader(std::move(decoder), this)),
       folderTreeModel_(new QFileSystemModel(this)) {
+    favoriteFolders_.setStringList(QSettings().value(favoriteFoldersKey).toStringList());
     emptyPane_ = new BrowseController(loader_, folderTreeModel_, {}, true, this);
     panes_.append(createPane(deferInitialDirectory ? QString{} : initialDirectory,
                              deferInitialDirectory));
@@ -49,6 +64,72 @@ BrowseController* BrowseWorkspaceController::activeBrowsePane() const {
 
 bool BrowseWorkspaceController::canCompare() const {
     return selectedImagePaths_.size() >= 2 && selectedImagePaths_.size() <= 4;
+}
+
+int BrowseWorkspaceController::favoriteFolderIndex(const QString& path) const {
+#ifdef Q_OS_WIN
+    constexpr auto sensitivity = Qt::CaseInsensitive;
+#else
+    constexpr auto sensitivity = Qt::CaseSensitive;
+#endif
+    const auto folders = favoriteFolders();
+    const auto match = std::find_if(folders.cbegin(), folders.cend(), [&](const QString& folder) {
+        return folder.compare(path, sensitivity) == 0;
+    });
+    return match == folders.cend() ? -1 : static_cast<int>(match - folders.cbegin());
+}
+
+bool BrowseWorkspaceController::isFavoriteFolder(const QString& path) const {
+    return favoriteFolderIndex(favoriteFolderPath(path)) >= 0;
+}
+
+void BrowseWorkspaceController::setFolderFavorite(const QString& path, bool favorite) {
+    const auto folder = favoriteFolderPath(path);
+    if (folder.isEmpty()) return;
+    const int index = favoriteFolderIndex(folder);
+    if (favorite == (index >= 0)) return;
+
+    if (favorite) {
+        const int row = favoriteFolders_.rowCount();
+        favoriteFolders_.insertRow(row);
+        favoriteFolders_.setData(favoriteFolders_.index(row), folder);
+    } else {
+        favoriteFolders_.removeRow(index);
+    }
+    QSettings().setValue(favoriteFoldersKey, favoriteFolders());
+    emit favoriteFoldersChanged();
+}
+
+void BrowseWorkspaceController::loadFavoriteChildren(const QString& path) {
+    const int index = favoriteFolderIndex(favoriteFolderPath(path));
+    if (index < 0) return;
+    const QString folder = favoriteFolders_.data(favoriteFolders_.index(index)).toString();
+    if (loadingFavoriteFolders_.contains(folder)) return;
+    loadingFavoriteFolders_.insert(folder);
+
+    const QPointer<BrowseWorkspaceController> self(this);
+    // An offline share can block filesystem calls. Keep those reads away from
+    // both the GUI thread and the worker pool that the app waits for on exit.
+    std::thread([self, folder] {
+        const QFileInfo info(folder);
+        const bool available = info.isDir() && info.isReadable();
+        QStringList children;
+        if (available) {
+            const auto directories = QDir(folder).entryInfoList(
+                QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable | QDir::NoSymLinks,
+                QDir::Name | QDir::IgnoreCase);
+            children.reserve(directories.size());
+            for (const auto& directory : directories)
+                children.append(directory.absoluteFilePath());
+        }
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, folder, children = std::move(children), available] {
+            if (!self) return;
+            self->loadingFavoriteFolders_.remove(folder);
+            if (self->isFavoriteFolder(folder))
+                emit self->favoriteChildrenLoaded(folder, children, available);
+        }, Qt::QueuedConnection);
+    }).detach();
 }
 
 QString BrowseWorkspaceController::statusText() const {

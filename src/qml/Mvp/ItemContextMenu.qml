@@ -12,6 +12,9 @@ AppMenu {
         const path = itemPath.toLowerCase()
         return !isFolder && (path.endsWith(".raw") || path.endsWith(".yuv"))
     }
+    readonly property bool folderIsFavorite: isFolder && !!workspaceController &&
+        !!workspaceController.favoriteFolders && workspaceController.favoriteFolders.length > 0 &&
+        workspaceController.isFavoriteFolder(itemPath)
     signal openRequested()
     signal resizeRequested()
 
@@ -57,6 +60,13 @@ AppMenu {
         text: qsTr("Paste into folder")
         enabled: root.controller.canPaste
         onTriggered: root.controller.pasteItemsInto(root.itemPath)
+    }
+    AppMenuItem {
+        objectName: "itemPinFolderAction"
+        visible: root.isFolder && !!root.workspaceController && !!root.workspaceController.favoriteFolderModel
+        text: root.folderIsFavorite ? qsTranslate("FolderNavigator", "Unpin from Favorites")
+                                    : qsTranslate("FolderNavigator", "Pin to Favorites")
+        onTriggered: root.workspaceController.setFolderFavorite(root.itemPath, !root.folderIsFavorite)
     }
     AppMenuSeparator {}
     AppMenuItem {

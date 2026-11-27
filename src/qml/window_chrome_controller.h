@@ -29,6 +29,9 @@ public:
 signals:
     void metricsChanged();
     void captionStateChanged();
+    void mousePressed(const QPointF& position);
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 private:
     QPointer<QWindow> window_;
     quintptr nativeHandle_ = 0;

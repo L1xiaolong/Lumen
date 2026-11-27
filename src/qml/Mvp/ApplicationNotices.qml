@@ -39,9 +39,10 @@ Column {
         width: root.width
         height: diagnosticContent.implicitHeight + 28
         visible: root.hasDiagnostic
-        radius: 6
+        radius: 8
         color: Theme.raisedSurface
-        border.color: Theme.opticalGray
+        border.color: Theme.borderStrong
+        ElevationShadow { radius: 8; spread: 2 }
         Column {
             id: diagnosticContent
             x: 14; y: 14
@@ -92,9 +93,10 @@ Column {
         width: root.width
         height: updateContent.implicitHeight + 28
         visible: root.hasUpdate
-        radius: 6
+        radius: 8
         color: Theme.raisedSurface
-        border.color: Theme.opticalGray
+        border.color: Theme.borderStrong
+        ElevationShadow { radius: 8; spread: 2 }
         Column {
             id: updateContent
             x: 14; y: 14

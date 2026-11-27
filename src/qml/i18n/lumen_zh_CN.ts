@@ -1582,43 +1582,90 @@ Choose another folder or drop images here</source>
 <context>
     <name>FolderNavigator</name>
     <message>
-        <location filename="../Mvp/FolderNavigator.qml" line="266"/>
+        <location filename="../Mvp/FolderNavigator.qml" line="285"/>
         <source>Recent</source>
         <translation>最近使用</translation>
     </message>
     <message>
-        <location filename="../Mvp/FolderNavigator.qml" line="299"/>
+        <location filename="../Mvp/FolderNavigator.qml" line="336"/>
         <source>Quick Access</source>
         <translation>快速访问</translation>
     </message>
     <message>
-        <location filename="../Mvp/FolderNavigator.qml" line="331"/>
+        <location filename="../Mvp/FolderNavigator.qml" line="529"/>
         <source>Locations</source>
         <translation>位置</translation>
     </message>
     <message>
-        <location filename="../Mvp/FolderNavigator.qml" line="605"/>
+        <location filename="../Mvp/FolderNavigator.qml" line="834"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../Mvp/FolderNavigator.qml" line="614"/>
+        <location filename="../Mvp/FolderNavigator.qml" line="843"/>
         <source>Open in new pane</source>
         <translation>在新窗格中打开</translation>
     </message>
     <message>
-        <location filename="../Mvp/FolderNavigator.qml" line="631"/>
+        <location filename="../Mvp/FolderNavigator.qml" line="866"/>
         <source>Open in Finder</source>
         <translation>在 Finder 中打开</translation>
     </message>
     <message>
-        <location filename="../Mvp/FolderNavigator.qml" line="631"/>
+        <location filename="../Mvp/FolderNavigator.qml" line="866"/>
         <source>Open in File Explorer</source>
         <translation>在文件资源管理器中打开</translation>
     </message>
     <message>
         <source>Network</source>
         <translation type="vanished">网络</translation>
+    </message>
+    <message>
+        <location filename="../Mvp/FolderNavigator.qml" line="385"/>
+        <source>Favorites</source>
+        <translation>收藏夹</translation>
+    </message>
+    <message>
+        <location filename="../Mvp/FolderNavigator.qml" line="421"/>
+        <source>Right-click a folder to pin it here.</source>
+        <translation>右键点击文件夹即可固定到这里。</translation>
+    </message>
+    <message>
+        <location filename="../Mvp/FolderNavigator.qml" line="466"/>
+        <source>Collapse subfolders</source>
+        <translation>收起子文件夹</translation>
+    </message>
+    <message>
+        <location filename="../Mvp/FolderNavigator.qml" line="466"/>
+        <source>Expand subfolders</source>
+        <translation>展开子文件夹</translation>
+    </message>
+    <message>
+        <location filename="../Mvp/FolderNavigator.qml" line="494"/>
+        <source>Loading subfolders…</source>
+        <translation>正在加载子文件夹…</translation>
+    </message>
+    <message>
+        <location filename="../Mvp/FolderNavigator.qml" line="495"/>
+        <source>No subfolders</source>
+        <translation>没有子文件夹</translation>
+    </message>
+    <message>
+        <location filename="../Mvp/FolderNavigator.qml" line="495"/>
+        <source>Folder unavailable</source>
+        <translation>文件夹不可用</translation>
+    </message>
+    <message>
+        <location filename="../Mvp/FolderNavigator.qml" line="858"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="67"/>
+        <source>Unpin from Favorites</source>
+        <translation>从收藏夹取消固定</translation>
+    </message>
+    <message>
+        <location filename="../Mvp/FolderNavigator.qml" line="858"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="68"/>
+        <source>Pin to Favorites</source>
+        <translation>固定到收藏夹</translation>
     </message>
 </context>
 <context>
@@ -2958,67 +3005,67 @@ Choose another folder or drop images here</source>
 <context>
     <name>ItemContextMenu</name>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="25"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="28"/>
         <source>Open full screen</source>
         <translation>全屏打开</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="30"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="33"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="35"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="38"/>
         <source>Compare selected</source>
         <translation>对比所选图片</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="41"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="44"/>
         <source>RAW/YUV parameters…</source>
         <translation>RAW/YUV 参数…</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="52"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="55"/>
         <source>Restore original</source>
         <translation>恢复原图</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="57"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="60"/>
         <source>Paste into folder</source>
         <translation>粘贴到文件夹</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="63"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="73"/>
         <source>Cut</source>
         <translation>剪切</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="68"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="78"/>
         <source>Copy</source>
         <translation>复制</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="73"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="83"/>
         <source>Rename…</source>
         <translation>重命名…</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="78"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="88"/>
         <source>Move to Trash</source>
         <translation>移入回收站</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="84"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="94"/>
         <source>Reveal in Finder</source>
         <translation>在 Finder 中显示</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="84"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="94"/>
         <source>Show in File Explorer</source>
         <translation>在文件资源管理器中显示</translation>
     </message>
     <message>
-        <location filename="../Mvp/ItemContextMenu.qml" line="89"/>
+        <location filename="../Mvp/ItemContextMenu.qml" line="99"/>
         <source>Properties</source>
         <translation>属性</translation>
     </message>

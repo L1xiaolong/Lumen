@@ -2,7 +2,9 @@
 
 #include <QObject>
 #include <QFileSystemModel>
+#include <QSet>
 #include <QStringList>
+#include <QStringListModel>
 #include <QVariantList>
 #include <QVector>
 
@@ -30,6 +32,8 @@ class BrowseWorkspaceController final : public QObject {
                    NOTIFY workspaceSelectionChanged)
     Q_PROPERTY(bool canCompare READ canCompare NOTIFY workspaceSelectionChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
+    Q_PROPERTY(QStringList favoriteFolders READ favoriteFolders NOTIFY favoriteFoldersChanged)
+    Q_PROPERTY(QAbstractItemModel* favoriteFolderModel READ favoriteFolderModel CONSTANT)
 
   public:
     BrowseWorkspaceController(std::shared_ptr<const IImageDecoder> decoder,
@@ -49,6 +53,8 @@ class BrowseWorkspaceController final : public QObject {
     }
     [[nodiscard]] bool canCompare() const;
     [[nodiscard]] QString statusText() const;
+    [[nodiscard]] QStringList favoriteFolders() const { return favoriteFolders_.stringList(); }
+    [[nodiscard]] QAbstractItemModel* favoriteFolderModel() { return &favoriteFolders_; }
     void retranslate();
     [[nodiscard]] ImageLoader* loader() const { return loader_; }
 
@@ -64,12 +70,17 @@ class BrowseWorkspaceController final : public QObject {
     Q_INVOKABLE void startDeferredInitialDirectory();
     Q_INVOKABLE void confirmPendingTransfer();
     Q_INVOKABLE void cancelPendingTransfer();
+    Q_INVOKABLE bool isFavoriteFolder(const QString& path) const;
+    Q_INVOKABLE void setFolderFavorite(const QString& path, bool favorite);
+    Q_INVOKABLE void loadFavoriteChildren(const QString& path);
 
   signals:
     void panesChanged();
     void activePaneChanged();
     void workspaceSelectionChanged();
     void statusTextChanged();
+    void favoriteFoldersChanged();
+    void favoriteChildrenLoaded(const QString& path, const QStringList& children, bool available);
     void compareRequested(const QStringList& paths);
     void directoryOpenFailed(const QString& path, const QString& message);
     void recentDirectoryMissing(const QString& path);
@@ -83,12 +94,15 @@ class BrowseWorkspaceController final : public QObject {
     void synchronizeRecentFolders(BrowseController* source);
     void synchronizeRecentLocations(BrowseController* source);
     void normalizeDisplayModes();
+    [[nodiscard]] int favoriteFolderIndex(const QString& path) const;
 
     ImageLoader* loader_ = nullptr;
     QFileSystemModel* folderTreeModel_ = nullptr;
     BrowseController* emptyPane_ = nullptr;
     QVector<BrowseController*> panes_;
     QStringList selectedImagePaths_;
+    QStringListModel favoriteFolders_;
+    QSet<QString> loadingFavoriteFolders_;
     QString deferredInitialDirectory_;
     bool deferredInitialDirectoryPending_ = false;
     int activePaneIndex_ = -1;

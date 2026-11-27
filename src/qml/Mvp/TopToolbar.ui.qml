@@ -98,40 +98,73 @@ Rectangle {
             Layout.rightMargin: 8
             color: Theme.opticalGray
         }
-        RowLayout {
-            spacing: 2
-            AppIconButton {
-                id: gridModeButton
-                objectName: "gridModeButton"
-                controlSize: root.toolbarButtonSize
-                renderedIconSize: root.toolbarIconSize
-                checkable: true
-                checked: root.displayMode === 0
-                enabled: root.activePaneAvailable && root.activeDirectoryAvailable && root.gridEnabled
-                iconSource: root.iconPrefix + "grid.svg"
-                toolTipText: root.gridEnabled ? qsTr("Grid view") : qsTr("Grid view is available with up to 2 browser panes")
+        Rectangle {
+            id: viewModeSegmented
+            Layout.preferredWidth: viewModeRow.implicitWidth + 4
+            Layout.preferredHeight: root.toolbarButtonSize + 2
+            radius: 7
+            color: Theme.paperWhite
+            border.width: 1
+            border.color: Theme.borderSubtle
+
+            Rectangle {
+                id: viewModePill
+                readonly property Item targetButton:
+                    root.displayMode === 0 ? gridModeButton
+                    : root.displayMode === 1 ? listModeButton : galleryModeButton
+                x: targetButton.x + 2
+                y: 2
+                width: targetButton.width
+                height: parent.height - 4
+                radius: 5
+                color: Theme.raisedSurface
+                border.width: 1
+                border.color: Theme.borderSubtle
+                visible: root.activePaneAvailable && root.activeDirectoryAvailable
+                Behavior on x { NumberAnimation { duration: Theme.motionNormal; easing.type: Easing.OutCubic } }
+                Behavior on width { NumberAnimation { duration: Theme.motionNormal; easing.type: Easing.OutCubic } }
             }
-            AppIconButton {
-                id: listModeButton
-                objectName: "listModeButton"
-                controlSize: root.toolbarButtonSize
-                renderedIconSize: root.toolbarIconSize
-                checkable: true
-                checked: root.displayMode === 1
-                enabled: root.activePaneAvailable && root.activeDirectoryAvailable
-                iconSource: root.iconPrefix + "list.svg"
-                toolTipText: qsTr("List view")
-            }
-            AppIconButton {
-                id: galleryModeButton
-                objectName: "galleryModeButton"
-                controlSize: root.toolbarButtonSize
-                renderedIconSize: root.toolbarIconSize
-                checkable: true
-                checked: root.displayMode === 2
-                enabled: root.activePaneAvailable && root.activeDirectoryAvailable && root.galleryEnabled
-                iconSource: root.iconPrefix + "gallery.svg"
-                toolTipText: root.galleryEnabled ? qsTr("Gallery view") : qsTr("Gallery view is available with 1 browser pane")
+
+            RowLayout {
+                id: viewModeRow
+                anchors.centerIn: parent
+                spacing: 2
+                AppIconButton {
+                    id: gridModeButton
+                    objectName: "gridModeButton"
+                    controlSize: root.toolbarButtonSize - 2
+                    renderedIconSize: root.toolbarIconSize
+                    suppressCheckedBackground: true
+                    checkable: true
+                    checked: root.displayMode === 0
+                    enabled: root.activePaneAvailable && root.activeDirectoryAvailable && root.gridEnabled
+                    iconSource: root.iconPrefix + "grid.svg"
+                    toolTipText: root.gridEnabled ? qsTr("Grid view") : qsTr("Grid view is available with up to 2 browser panes")
+                }
+                AppIconButton {
+                    id: listModeButton
+                    objectName: "listModeButton"
+                    controlSize: root.toolbarButtonSize - 2
+                    renderedIconSize: root.toolbarIconSize
+                    suppressCheckedBackground: true
+                    checkable: true
+                    checked: root.displayMode === 1
+                    enabled: root.activePaneAvailable && root.activeDirectoryAvailable
+                    iconSource: root.iconPrefix + "list.svg"
+                    toolTipText: qsTr("List view")
+                }
+                AppIconButton {
+                    id: galleryModeButton
+                    objectName: "galleryModeButton"
+                    controlSize: root.toolbarButtonSize - 2
+                    renderedIconSize: root.toolbarIconSize
+                    suppressCheckedBackground: true
+                    checkable: true
+                    checked: root.displayMode === 2
+                    enabled: root.activePaneAvailable && root.activeDirectoryAvailable && root.galleryEnabled
+                    iconSource: root.iconPrefix + "gallery.svg"
+                    toolTipText: root.galleryEnabled ? qsTr("Gallery view") : qsTr("Gallery view is available with 1 browser pane")
+                }
             }
         }
         Rectangle {
@@ -182,6 +215,6 @@ Rectangle {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: 1
-        color: Theme.opticalGray
+        color: Theme.borderSubtle
     }
 }

@@ -44,10 +44,20 @@ ToolTip {
             font.pixelSize: 11
         }
     }
+    enter: Transition {
+        ParallelAnimation {
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.motionFast; easing.type: Easing.OutCubic }
+            NumberAnimation { property: "scale"; from: 0.96; to: 1.0; duration: Theme.motionFast; easing.type: Easing.OutCubic }
+        }
+    }
+    exit: Transition {
+        NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.motionFast; easing.type: Easing.InCubic }
+    }
     background: Rectangle {
         color: Theme.raisedSurface
         radius: 6
         border.width: 1
-        border.color: Theme.opticalGray
+        border.color: Theme.borderSubtle
+        ElevationShadow { radius: 6; spread: 1 }
     }
 }

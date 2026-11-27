@@ -12,6 +12,8 @@ Button {
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : Theme.disabledOpacity
+    scale: root.down ? 0.97 : 1.0
+    Behavior on scale { NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
     contentItem: Text {
         id: label
         text: root.text

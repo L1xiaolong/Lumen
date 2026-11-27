@@ -6,12 +6,16 @@ QtObject {
     property string canvasBackgroundMode: "neutral"
 
     // Neutral workbench surfaces keep image content visually dominant.
-    readonly property color sensorWhite: darkMode ? "#1C1C1E" : "#FAFAFA"
-    readonly property color paperWhite: darkMode ? "#242426" : "#F5F5F5"
-    readonly property color raisedSurface: darkMode ? "#29292C" : "#FFFFFF"
-    readonly property color opticalGray: darkMode ? "#39393D" : "#E5E5E5"
-    readonly property color softHover: darkMode ? "#303033" : "#EEEEEF"
-    readonly property color pressedSurface: darkMode ? "#38383C" : "#E5E5E7"
+    readonly property color sensorWhite: darkMode ? "#121214" : "#FAFAFA"
+    readonly property color paperWhite: darkMode ? "#19191D" : "#F4F4F5"
+    readonly property color raisedSurface: darkMode ? "#202024" : "#FFFFFF"
+    readonly property color opticalGray: darkMode ? "#2C2C32" : "#E5E5E7"
+    readonly property color borderSubtle: darkMode ? "#14FFFFFF" : "#12000000"
+    readonly property color borderStrong: darkMode ? "#26FFFFFF" : "#22000000"
+    readonly property color elevationShadow: darkMode ? "#4D000000" : "#16000000"
+    readonly property color elevationAmbient: darkMode ? "#2E000000" : "#0A000000"
+    readonly property color softHover: darkMode ? "#28282E" : "#EEEEEF"
+    readonly property color pressedSurface: darkMode ? "#303037" : "#E5E5E7"
     readonly property color graphiteInk: darkMode ? "#DDDDE2" : "#303036"
     readonly property color mutedInk: darkMode ? "#A8A8B0" : "#666666"
     readonly property color faintInk: darkMode ? "#A5A5AB" : "#666666"
@@ -69,7 +73,7 @@ QtObject {
     readonly property color explorerIndentGuide: darkMode ? "#404040" : "#D5D9DC"
     readonly property string iconPrefix: darkMode ? "qrc:/icons/ui-dark/" : "qrc:/icons/ui/"
     readonly property real disabledOpacity: darkMode ? 0.52 : 0.38
-    readonly property color sidebarSurface: darkMode ? "#242426" : "#F5F5F5"
+    readonly property color sidebarSurface: darkMode ? "#17171A" : "#F5F5F5"
     readonly property int metadataFontSize: 11
     readonly property int bodyFontSize: 13
     readonly property int captionFontSize: 12
@@ -79,12 +83,12 @@ QtObject {
     readonly property real descriptionLineHeight: 1.35
 
     // Distinct cues for file selection, keyboard focus, and the active pane.
-    readonly property color thumbnailWell: darkMode ? "#282828" : "#E8E8E8"
+    readonly property color thumbnailWell: darkMode ? "#1C1C20" : "#E8E8E8"
     readonly property color fileSelectionSurface: accentSurface
     readonly property color fileSelectionBadge: accent
     readonly property color fileSelectionBorder: accentBorder
     readonly property color keyboardFocus: accent
-    readonly property color activePaneHeader: darkMode ? "#252530" : "#F5F5FC"
+    readonly property color activePaneHeader: darkMode ? "#1D1D26" : "#F5F5FC"
     readonly property color activePaneAccent: accent
 
     readonly property int unit: 4
@@ -95,6 +99,9 @@ QtObject {
     readonly property int touchTarget: 32
     readonly property int fast: 120
     readonly property int normal: 180
+    readonly property int motionFast: 110
+    readonly property int motionNormal: 180
+    readonly property int motionSlow: 240
     // The application provides the platform's current UI and fixed-width fonts.
     // Empty fallbacks keep standalone QML tooling and tests on their own defaults.
     readonly property string uiFont:
